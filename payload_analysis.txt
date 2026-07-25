@@ -1,0 +1,92 @@
+================================================================================
+ESTRUCTURA DEL PAYLOAD Y DIAGNÓSTICO DE ARQUITECTURA (CHAT RAG / OLLAMA API)
+================================================================================
+
+--- 1. ESTRUCTURA DEL PAYLOAD JSON ENVIADO A OLLAMA (Paso a Paso) ---
+
+A continuación se muestra el JSON crudo exacto que recibe la API de Ollama (/api/chat) 
+en el Turno 5 ("¿Cuál fue tu primera respuesta?"):
+
+{
+  "model": "gemma4:12b",
+  "messages": [
+    {
+      "role": "system",
+      "content": "Eres un asistente experto de inteligencia artificial conversacional. \nResponde a las preguntas del usuario utilizando tu conocimiento general preentrenado y el historial de la conversación. Sé atento, fluido, preciso y mantén coherencia conversacional."
+    },
+    {
+      "role": "user",
+      "content": "quién ganó el mundial 2026?"
+    },
+    {
+      "role": "assistant",
+      "content": "El Mundial de la FIFA 2026 aún no se ha jugado, por lo que todavía no hay un ganador.\n\nEl torneo está programado para realizarse en junio y julio de 2026..."
+    },
+    {
+      "role": "user",
+      "content": "¿Qué día es hoy?"
+    },
+    {
+      "role": "assistant",
+      "content": "Hoy es martes, 21 de mayo de 2024."
+    },
+    {
+      "role": "user",
+      "content": "¿Cuál fue el primer mensaje de esta conversación?"
+    },
+    {
+      "role": "assistant",
+      "content": "El primer mensaje de esta conversación fue: \"hola\"."
+    },
+    {
+      "role": "user",
+      "content": "¿Cuál fue tu primera respuesta?"
+    }
+  ],
+  "stream": false,
+  "options": {
+    "temperature": 0.5,
+    "num_ctx": 32768
+  }
+}
+
+
+================================================================================
+--- 2. DIAGNÓSTICO TÉCNICO DE LOS 3 PROBLEMAS DETECTADOS ---
+================================================================================
+
+🔴 PROBLEMA 1 (LA CAUSA RAÍZ MATEMÁTICA): Truncamiento por Ventana Deslizante (Sliding Window)
+--------------------------------------------------------------------------------
+• En 'rag_service.py', la línea 'limited_history = history[-6:]' recortaba el 
+  historial a SOLO los últimos 6 mensajes (3 turnos).
+• Cuando la conversación llegó al mensaje #5, la lista de mensajes acumulados era de 8 mensajes.
+• Al aplicar 'history[-6:]', se ELIMINARON del payload los 2 primeros mensajes:
+  ❌ Mensaje 1 (User): "hola" [ELIMINADO DEL PAYLOAD]
+  ❌ Mensaje 2 (Asst): "¡Hola! ¿En qué puedo ayudarte hoy?..." [ELIMINADO DEL PAYLOAD]
+• Por lo tanto, cuando le preguntaste "¿Cuál fue tu primera respuesta?", el mensaje asistido 
+  MÁS ANTIGUO presente en la memoria que recibió la GPU era:
+  👉 "El Mundial de la FIFA 2026 aún no se ha jugado..."
+• El modelo NO alucinó por incapacidad; simplemente RESPONDIÓ CORRECTAMENTE en función de los 
+  datos presentes en el Payload que le entregó el backend.
+
+
+🔴 PROBLEMA 2: Alucinación de la Fecha Actual ("martes, 21 de mayo de 2024")
+--------------------------------------------------------------------------------
+• El modelo no tenía forma de saber la fecha actual del sistema operativo porque el System 
+  Prompt NO le proporcionaba la fecha/hora en tiempo real.
+• Al preguntarle "¿Qué día es hoy?", Gemma 4 12B recurrió a la fecha de corte por defecto 
+  de sus pesos de preentrenamiento.
+• Solución necesaria: Inyectar la fecha del sistema en el System Prompt 
+  (ej. "[Fecha actual del sistema: Sábado, 25 de Julio de 2026]").
+
+
+🔴 PROBLEMA 3: Acordeón del Frontend "Contexto RAG Local (1 fragmentos extraídos)"
+--------------------------------------------------------------------------------
+• En 'main.py', cuando no había fuentes seleccionadas, se enviaba al frontend un array:
+  context_sources = ["No hay contexto de documentos locales ni búsquedas web..."]
+• El componente React ('ChatTab.tsx') veía 'msg.sources.length === 1' y renderizaba el 
+  acordeón de RAG con el texto de advertencia como si fuera un chunk de un documento.
+• Solución necesaria: Retornar 'web_sources: []' y 'context_sources: []' verdaderamente 
+  vacíos cuando se chatea en modo conocimiento crudo sin fuentes.
+
+================================================================================
