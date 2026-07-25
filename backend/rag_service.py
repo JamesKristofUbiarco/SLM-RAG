@@ -1,0 +1,414 @@
+import numpy as np
+import requests
+import json
+import pickle
+from typing import List, Dict, Any, Tuple
+from sentence_transformers import SentenceTransformer
+from database import get_db
+from config import settings
+
+class RAGService:
+    def __init__(self):
+        self.model = None
+
+    def _load_model(self):
+        if self.model is None:
+            print(f"Loading embedding model '{settings.embedding_model}' on device '{settings.embedding_device}'...")
+            self.model = SentenceTransformer(settings.embedding_model, device=settings.embedding_device)
+            print("Embedding model loaded successfully.")
+
+    def unload_embedding_model(self):
+        if self.model is not None:
+            print(f"Unloading embedding model '{settings.embedding_model}' from device '{settings.embedding_device}'...")
+            self.model = None
+            import gc
+            import torch
+            gc.collect()
+            if torch.cuda.is_available():
+                try:
+                    torch.cuda.empty_cache()
+                except Exception:
+                    pass
+            print("Embedding model unloaded successfully.")
+        
+    def chunk_text(self, text: str, size: int = settings.chunk_size, overlap: int = settings.chunk_overlap) -> List[str]:
+        """Divide the text into overlapping chunks of characters."""
+        if not text or not text.strip():
+            return []
+            
+        # We split by space to avoid cutting in the middle of words
+        words = text.split()
+        if len(text) <= size:
+            return [text]
+            
+        chunks = []
+        current_words = []
+        current_length = 0
+        
+        # Word-based chunking with word-based overlap to keep sentences clean
+        overlap_words_count = max(1, int(overlap / 6)) # estimate 6 chars per word
+        step = max(1, int(size / 6) - overlap_words_count)
+        
+        i = 0
+        while i < len(words):
+            chunk_words = words[i:i + int(size / 6)]
+            chunk_text = " ".join(chunk_words)
+            if chunk_text.strip():
+                chunks.append(chunk_text)
+            i += step
+            
+        return chunks
+
+    def generate_embeddings(self, texts: List[str]) -> List[np.ndarray]:
+        """Generate vector embeddings for a list of texts."""
+        if not texts:
+            return []
+        self._load_model()
+        from gpu_lock import gpu_lock
+        with gpu_lock.acquire("Generar Embeddings"):
+            return self.model.encode(texts, convert_to_numpy=True)
+
+    def store_chunks(self, transcription_id: int, text: str):
+        """Chunk text, generate embeddings, and save to SQLite database."""
+        chunks = self.chunk_text(text)
+        if not chunks:
+            return
+            
+        embeddings = self.generate_embeddings(chunks)
+        
+        with get_db() as conn:
+            for chunk_text, emb in zip(chunks, embeddings):
+                emb_blob = pickle.dumps(emb)
+                conn.execute(
+                    "INSERT INTO chunks (transcription_id, text, embedding) VALUES (?, ?, ?)",
+                    (transcription_id, chunk_text, emb_blob)
+                )
+            conn.commit()
+        # Unload model from VRAM immediately to free memory!
+        self.unload_embedding_model()
+
+    def get_context(self, query: str, transcription_ids: Any, top_k: int = 6) -> str:
+        """Search for the most semantically similar chunks across one or multiple transcriptions/sources."""
+        if isinstance(transcription_ids, (int, str)):
+            try:
+                ids = [int(transcription_ids)]
+            except ValueError:
+                ids = []
+        elif isinstance(transcription_ids, list):
+            ids = [int(x) for x in transcription_ids if str(x).isdigit()]
+        else:
+            ids = []
+
+        if not ids:
+            return ""
+
+        self._load_model()
+        from gpu_lock import gpu_lock
+        with gpu_lock.acquire("Codificar Consulta (RAG)"):
+            query_vector = self.model.encode(query, convert_to_numpy=True)
+        self.unload_embedding_model()
+        
+        placeholders = ",".join(["?"] * len(ids))
+        sql = f"""
+            SELECT c.id, c.text, c.embedding, t.filename 
+            FROM chunks c
+            JOIN transcriptions t ON c.transcription_id = t.id
+            WHERE c.transcription_id IN ({placeholders})
+        """
+        with get_db() as conn:
+            rows = conn.execute(sql, ids).fetchall()
+            
+        if not rows:
+            return ""
+            
+        similarities = []
+        for row in rows:
+            emb = pickle.loads(row["embedding"])
+            dot_product = np.dot(query_vector, emb)
+            norm_q = np.linalg.norm(query_vector)
+            norm_emb = np.linalg.norm(emb)
+            similarity = dot_product / (norm_q * norm_emb) if norm_q > 0 and norm_emb > 0 else 0.0
+            snippet = f"[Fuente: {row['filename']}]\n{row['text']}"
+            similarities.append((similarity, snippet))
+            
+        # Sort descending by similarity
+        similarities.sort(key=lambda x: x[0], reverse=True)
+        top_chunks = [text for _, text in similarities[:top_k]]
+        return "\n\n---\n\n".join(top_chunks)
+
+    def call_ollama_generate(self, prompt: str, temperature: float = 0.3) -> str:
+        """Query Ollama generate API endpoint."""
+        payload = {
+            "model": settings.llm_model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": temperature,
+                "num_ctx": settings.ollama_context_length
+            }
+        }
+        from gpu_lock import gpu_lock
+        with gpu_lock.acquire("Ollama Generación"):
+            try:
+                response = requests.post(f"{settings.ollama_url}/api/generate", json=payload, timeout=180)
+                if response.status_code == 200:
+                    return response.json().get("response", "").strip()
+            except Exception as e:
+                return f"[Error Ollama connection]: {str(e)}"
+            return "[Error]: No response from Ollama."
+
+    def unload_model(self) -> bool:
+        """Tell Ollama to unload the LLM model from VRAM to free GPU memory."""
+        try:
+            payload = {
+                "model": settings.llm_model,
+                "prompt": "",
+                "keep_alive": 0
+            }
+            response = requests.post(f"{settings.ollama_url}/api/generate", json=payload, timeout=10)
+            if response.status_code == 200:
+                print(f"Successfully requested Ollama to unload model '{settings.llm_model}' from VRAM.")
+                return True
+        except Exception as e:
+            print(f"Failed to unload Ollama model: {str(e)}")
+        return False
+
+    def generate_summary(self, title: str, text: str) -> str:
+        """Generate a structured summary, using Map-Reduce only if the transcript exceeds context window capacity."""
+        words = text.split()
+        
+        # Estimate context window capability (Spanish tokenization safety estimation: 1 word ~ 1.5 tokens)
+        # Save ~4000 tokens for prompt instructions, context tags, and LLM generation output
+        context_window = settings.ollama_context_length
+        safe_generation_buffer = 4000
+        
+        # Maximum words that safely fit into the remaining context window
+        max_transcript_words = int((context_window - safe_generation_buffer) / 1.5)
+        max_transcript_words = max(max_transcript_words, 2000) # Safeguard minimum
+        
+        if len(words) <= max_transcript_words:
+            print(f"Transcript size ({len(words)} words) fits within the model context window ({context_window} tokens). Using single prompt summary.")
+            prompt = f"""Escribe un resumen ejecutivo estructurado y detallado del archivo '{title}'.
+Usa el siguiente formato:
+1. **Temática General / Objetivo del audio**: De qué se trata principalmente.
+2. **Puntos Clave / Ideas Principales**: Lista numerada detallando los temas principales.
+3. **Detalles Clave / Conclusiones**: Resumen final o conclusiones clave.
+
+Transcripción:
+{text}"""
+            return self.call_ollama_generate(prompt)
+        
+        # Map-Reduce flow fallback for extremely long transcripts
+        print(f"Transcript is extremely long ({len(words)} words) and exceeds safe single-prompt context threshold ({max_transcript_words} words). Initializing Map-Reduce summary flow...")
+        chunk_word_size = max(max_transcript_words // 3, 2000)
+        partial_summaries = []
+        
+        # Map Phase
+        for i in range(0, len(words), chunk_word_size):
+            sub_text = " ".join(words[i:i + chunk_word_size])
+            part_number = (i // chunk_word_size) + 1
+            total_parts = (len(words) - 1) // chunk_word_size + 1
+            print(f"Map phase: Summarizing chunk {part_number} of {total_parts}...")
+            
+            prompt_map = f"""A continuación se presenta la parte {part_number} de {total_parts} de la transcripción del archivo '{title}'.
+Genera un resumen analítico y estructurado de los temas tratados en esta parte específica. Sé detallado y mantén nombres, datos y hechos clave.
+
+Fragmento de Transcripción:
+{sub_text}"""
+            
+            summary_part = self.call_ollama_generate(prompt_map)
+            partial_summaries.append(f"--- RESUMEN PARCIAL PARTE {part_number} ---\n{summary_part}")
+
+        # Reduce Phase
+        print("Reduce phase: Synthesizing executive summary from all partial summaries...")
+        combined_partials = "\n\n".join(partial_summaries)
+        prompt_reduce = f"""A continuación se presentan los resúmenes parciales de las distintas partes del archivo '{title}'.
+Tu objetivo es sintetizar todos estos resúmenes parciales en un único "Resumen Ejecutivo Final" que sea completo y estructurado.
+
+Formato requerido:
+1. **Temática General / Objetivo del audio**: De qué se trata principalmente.
+2. **Puntos Clave / Ideas Principales**: Lista numerada consolidando los argumentos clave de todo el archivo.
+3. **Detalles Clave / Conclusiones**: Consolidación final de conclusiones o decisiones tomadas.
+
+Resúmenes parciales a consolidar:
+{combined_partials}"""
+        
+        final_summary = self.call_ollama_generate(prompt_reduce, temperature=0.2)
+        print("Structured executive summary generated successfully via Map-Reduce.")
+        return final_summary
+
+    def generate_essay_summary(self, title: str, segments: List[Dict[str, Any]], text: str = "") -> str:
+        """
+        Generate a Video Essay / Conference / Podcast summary with a timestamped index and detailed topic summaries.
+        """
+        def format_timestamp(seconds: float) -> str:
+            sec = int(seconds)
+            h = sec // 3600
+            m = (sec % 3600) // 60
+            s = sec % 60
+            if h > 0:
+                return f"{h:02d}:{m:02d}:{s:02d}"
+            return f"{m:02d}:{s:02d}"
+
+        # Reconstruct timestamped transcript lines
+        timestamped_lines = []
+        if segments:
+            for seg in segments:
+                start_sec = seg.get("start", 0)
+                time_str = format_timestamp(start_sec)
+                t = seg.get("text", "").strip()
+                if t:
+                    timestamped_lines.append(f"[{time_str}] {t}")
+        
+        full_timestamped_text = "\n".join(timestamped_lines) if timestamped_lines else text
+
+        words = full_timestamped_text.split()
+        context_window = settings.ollama_context_length
+        max_transcript_words = int((context_window - 4000) / 1.5)
+        max_transcript_words = max(max_transcript_words, 2500)
+
+        if len(words) > max_transcript_words:
+            # Smart sampling to fit into context window
+            step = (len(words) // max_transcript_words) + 1
+            words_sampled = words[::step]
+            full_timestamped_text = " ".join(words_sampled)
+
+        prompt = f"""Analiza la siguiente transcripción con marcas de tiempo del archivo '{title}'.
+Crea un documento estructurado en el estilo de un "Video Ensayo / Conferencia / Podcast" siguiendo ESTRICTAMENTE la siguiente estructura en Markdown:
+
+## 📌 Índice de Tiempos por Tema
+Genera una lista VERTICAL de viñetas (CADA LÍNEA DEBE COMENZAR CON '- ') con las marcas de tiempo exactas [HH:MM:SS] o [MM:SS] extraídas de la transcripción y el título de cada tema, capítulo o sección principal tratada.
+Formato OBLIGATORIO de cada línea del índice:
+- [HH:MM:SS] Título del Tema o Sección
+
+Ejemplo:
+- [00:00:10] Introducción al tema
+- [00:04:25] El problema con la arquitectura tradicional
+- [00:12:40] Análisis de resultados y conclusiones
+
+## 📝 Resumen Detallado por Tema / Capítulo
+Para cada uno de los temas listados en el índice anterior, redacta una sección estructurada:
+### [HH:MM:SS] Título del Tema
+- **Resumen**: Explicación clara y detallada de los temas discutidos en este lapso de tiempo.
+- **Ideas y Hechos Clave**: Argumentos principales, datos o conceptos expuestos.
+
+Transcripción con marcas de tiempo:
+{full_timestamped_text}"""
+
+        print(f"Generating Video Essay timestamped summary for '{title}'...")
+        return self.call_ollama_generate(prompt)
+
+    def generate_speaker_analysis(self, title: str, segments: List[Dict[str, Any]]) -> str:
+        """
+        Generate an analysis of each speaker's participation throughout the call.
+        """
+        # 1. Check if segments have speaker info
+        speakers = set(seg.get("speaker") for seg in segments if seg.get("speaker"))
+        if not speakers:
+            return ""
+            
+        print(f"Generating speaker participation analysis for {len(speakers)} speakers...")
+        
+        # 2. Reconstruct a structured speaker timeline text
+        dialog_lines = []
+        for seg in segments:
+            spk = seg.get("speaker", "Desconocido")
+            text = seg.get("text", "").strip()
+            if text:
+                dialog_lines.append(f"{spk}: {text}")
+                
+        dialog_text = "\n".join(dialog_lines)
+        
+        # Guard clause: Truncate dialogue if extremely long to fit nicely within LLM context
+        words = dialog_text.split()
+        if len(words) > 12000:
+            dialog_text = " ".join(words[:6000]) + "\n\n... [FRAGMENTO OMITIDO POR ESPACIO] ...\n\n" + " ".join(words[-6000:])
+            
+        prompt = f"""Analiza la siguiente transcripción de una reunión grabada del archivo '{title}'.
+En ella participan distintos locutores identificados como SPEAKER_00, SPEAKER_01, etc.
+
+Tu tarea es:
+1. Identificar a cada uno de los locutores que participan activamente.
+2. Describir de forma clara, objetiva y detallada el rol o la participación de cada miembro a lo largo de la llamada (qué temas defendió, cuáles fueron sus aportes principales, su postura o tono general y qué decisiones o compromisos asumió).
+3. Estructurar el análisis con subtítulos independientes para cada locutor en formato Markdown (por ejemplo, `### SPEAKER_00`, `### SPEAKER_01`, etc.).
+
+Transcripción diarizada:
+{dialog_text}"""
+
+        return self.call_ollama_generate(prompt)
+
+    def generate_commitments(self, title: str, text: str) -> str:
+        """
+        Generate a list of commitments, agreements, and decisions from the transcript.
+        """
+        print(f"Generating meeting commitments for '{title}'...")
+        
+        # Guard clause: Truncate transcript if extremely long to fit nicely within LLM context
+        words = text.split()
+        if len(words) > 12000:
+            text = " ".join(words[:6000]) + "\n\n... [FRAGMENTO OMITIDO POR ESPACIO] ...\n\n" + " ".join(words[-6000:])
+            
+        prompt = f"""Analiza la siguiente transcripción de una reunión grabada del archivo '{title}'.
+Identifica todos los compromisos, acuerdos, decisiones y tareas asignadas que se mencionan en la conversación.
+
+Tu tarea es:
+1. Extraer y listar detalladamente cada compromiso asumido o tarea asignada.
+2. Identificar claramente quién es la persona o locutor responsable de cada compromiso o tarea (si se especifica).
+3. Detallar las fechas límite o plazos acordados para las entregas (si se mencionan).
+4. Estructurar la respuesta en un formato de lista Markdown clara y fácil de leer.
+
+Si no se mencionan compromisos, acuerdos o tareas específicas en la llamada, indícalo amablemente de forma breve.
+
+Transcripción:
+{text}"""
+
+        return self.call_ollama_generate(prompt)
+
+    def query_llm(self, query: str, context: str, history: List[Dict[str, str]] = None) -> str:
+        """Call Ollama chat API injecting retrieved RAG context and rolling conversation history."""
+        import datetime
+        now_str = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+        has_real_context = bool(context and context.strip() and "No hay contexto de documentos" not in context)
+        
+        if has_real_context:
+            system_prompt = f"""Eres un asistente experto de inteligencia artificial. [Fecha/Hora Sistema: {now_str}]
+Responde la pregunta del usuario utilizando la información provista en el 'Contexto' a continuación. 
+Si el contexto no tiene suficiente información para responder sobre el tema, indícalo amablemente, pero no inventes información.
+
+Contexto de la Información:
+{context}
+"""
+        else:
+            system_prompt = f"""Eres un asistente experto de inteligencia artificial conversacional. [Fecha/Hora Sistema: {now_str}]
+Responde a las preguntas del usuario utilizando tu conocimiento general preentrenado y el historial de la conversación. Sé atento, fluido, preciso y mantén coherencia conversacional."""
+
+        messages = [{"role": "system", "content": system_prompt}]
+        
+        # Sliding Window chat history: keep up to 40 messages (20 turns) to preserve conversation memory safely in 32k window
+        if history:
+            limited_history = history[-40:]
+            for msg in limited_history:
+                messages.append({"role": msg["role"], "content": msg["content"]})
+                
+        messages.append({"role": "user", "content": query})
+        
+        payload = {
+            "model": settings.llm_model,
+            "messages": messages,
+            "stream": False,
+            "options": {
+                "temperature": 0.5,
+                "num_ctx": settings.ollama_context_length
+            }
+        }
+        from gpu_lock import gpu_lock
+        with gpu_lock.acquire("Ollama Chat"):
+            try:
+                response = requests.post(f"{settings.ollama_url}/api/chat", json=payload, timeout=90)
+                if response.status_code == 200:
+                    return response.json().get("message", {}).get("content", "Error al procesar la consulta.")
+            except Exception as e:
+                return f"Error al consultar al modelo de lenguaje: {str(e)}"
+            return "No se pudo obtener respuesta."
+
+rag_service = RAGService()
