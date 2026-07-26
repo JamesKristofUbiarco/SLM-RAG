@@ -498,7 +498,7 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
 
           <button
             type="button"
-            className={`btn btn-sm ${showSessionsPanel ? 'btn-primary' : 'btn-secondary'}`}
+            className={`btn btn-sm ${showSessionsPanel ? 'submit-btn' : 'btn-secondary'}`}
             onClick={() => setShowSessionsPanel(!showSessionsPanel)}
             style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}
           >
@@ -639,69 +639,6 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
         {/* Left Side: Multi-Source Selector Panel (Only if not Web-Only mode) */}
         {showSelectorCard && searchMode !== 'web' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            
-            {/* Conversations History Drawer */}
-            {showSessionsPanel && (
-              <div className="card glass-card" style={{ maxHeight: '350px', display: 'flex', flexDirection: 'column', border: '1px solid rgba(168,85,247,0.3)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                  <h3 style={{ margin: 0, fontSize: '0.9rem', color: '#c084fc' }}>
-                    <i className="fa-solid fa-clock-rotate-left"></i> Historial de Chats
-                  </h3>
-                  <button 
-                    type="button" 
-                    className="btn btn-sm btn-secondary" 
-                    onClick={() => setShowSessionsPanel(false)}
-                    style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem' }}
-                  >
-                    <i className="fa-solid fa-xmark"></i>
-                  </button>
-                </div>
-
-                <div style={{ flexGrow: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                  {sessions.length === 0 ? (
-                    <div style={{ fontSize: '0.75rem', color: '#64748b', textAlign: 'center', padding: '1rem' }}>
-                      No hay conversaciones guardadas.
-                    </div>
-                  ) : (
-                    sessions.map(s => (
-                      <div
-                        key={s.id}
-                        onClick={() => handleSelectSession(s)}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          padding: '0.4rem 0.6rem',
-                          borderRadius: '0.375rem',
-                          background: activeSessionId === s.id ? 'rgba(168, 85, 247, 0.18)' : 'rgba(255, 255, 255, 0.03)',
-                          border: activeSessionId === s.id ? '1px solid #a855f7' : '1px solid var(--border-glass)',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        <div style={{ overflow: 'hidden', paddingRight: '0.5rem' }}>
-                          <div style={{ fontWeight: 600, fontSize: '0.8125rem', color: activeSessionId === s.id ? '#fff' : '#cbd5e1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {s.title}
-                          </div>
-                          <div style={{ fontSize: '0.6875rem', color: '#64748b' }}>
-                            {formatDate(s.created_at)} · {s.message_count || 0} msgs
-                          </div>
-                        </div>
-
-                        <button
-                          type="button"
-                          title="Borrar conversación"
-                          onClick={(e) => handleDeleteSession(s.id, e)}
-                          style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '0.2rem 0.4rem', fontSize: '0.75rem', flexShrink: 0 }}
-                        >
-                          <i className="fa-solid fa-trash"></i>
-                        </button>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            )}
-
             {/* FolderTree Selector Card */}
             <div className="card glass-card" style={{ minHeight: '480px', height: 'calc(100vh - 300px)', display: 'flex', flexDirection: 'column', borderRadius: '12px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
@@ -716,7 +653,7 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
                   title="Ocultar selector"
                   style={{ fontSize: '0.75rem', padding: '0.2rem 0.4rem' }}
                 >
-                  <i className="fa-solid fa-chevron-left"></i>
+                  <i className="fa-solid fa-chevron-left"></i> Ocultar
                 </button>
               </div>
 
@@ -744,8 +681,19 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
           <div className="card glass-card chat-card" id="chat-container-card" style={{ display: 'flex', flexDirection: 'column', minHeight: '480px', height: 'calc(100vh - 300px)', borderRadius: '12px' }}>
             
             {/* Active Session & Search Mode Badge Bar */}
-            <div style={{ padding: '0.55rem 0.875rem', borderBottom: '1px solid var(--border-glass)', background: 'rgba(99, 102, 241, 0.08)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.8125rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+            <div style={{ padding: '0.55rem 0.875rem', borderBottom: '1px solid var(--border-glass)', background: 'rgba(245, 158, 11, 0.05)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.8125rem', flexWrap: 'wrap', gap: '0.5rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                {(!showSelectorCard || searchMode === 'web') && (
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-secondary"
+                    onClick={() => { setShowSelectorCard(true); if (searchMode === 'web') setSearchMode('local'); }}
+                    style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem', color: 'var(--primary)', border: '1px solid var(--border-amber)' }}
+                    title="Mostrar selector de fuentes"
+                  >
+                    <i className="fa-solid fa-folder-open"></i> Mostrar Fuentes ({selectedSourceIds.size})
+                  </button>
+                )}
                 <span style={{ color: 'var(--primary)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
                   {searchMode === 'local' && (
                     <><i className="fa-solid fa-folder-open" style={{ color: 'var(--primary)' }}></i> RAG Local ({selectedSourceIds.size > 0 ? `${selectedSourceIds.size} fuentes` : 'Sin fuentes - Conocimiento Crudo'})</>
@@ -1113,6 +1061,72 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
                   {isPromoting ? <><i className="fa-solid fa-spinner fa-spin"></i> Guardando...</> : <><i className="fa-solid fa-check"></i> Guardar en Proyecto</>}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* ── Modal: Conversations History Drawer (Portal) ── */}
+      {showSessionsPanel && createPortal(
+        <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1.5rem' }} onClick={() => setShowSessionsPanel(false)}>
+          <div className="card glass-card" style={{ width: '100%', maxWidth: '520px', maxHeight: '550px', padding: '1.75rem', border: '1px solid var(--border-amber)', boxShadow: '0 1rem 3rem rgba(0,0,0,0.5)', display: 'flex', flexDirection: 'column' }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.75rem' }}>
+              <h3 style={{ margin: 0, fontSize: '1rem', color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <i className="fa-solid fa-clock-rotate-left"></i> Historial de Conversaciones Guardadas
+              </h3>
+              <button 
+                type="button" 
+                className="btn btn-sm btn-secondary" 
+                onClick={() => setShowSessionsPanel(false)}
+                style={{ fontSize: '0.75rem', padding: '0.2rem 0.5rem' }}
+              >
+                <i className="fa-solid fa-xmark"></i> Cerrar
+              </button>
+            </div>
+
+            <div style={{ flexGrow: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem', paddingRight: '0.25rem' }}>
+              {sessions.length === 0 ? (
+                <div style={{ fontSize: '0.85rem', color: 'hsl(var(--text-muted))', textAlign: 'center', padding: '2rem' }}>
+                  No hay conversaciones guardadas.
+                </div>
+              ) : (
+                sessions.map(s => (
+                  <div
+                    key={s.id}
+                    onClick={() => handleSelectSession(s)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '0.65rem 0.875rem',
+                      borderRadius: '0.5rem',
+                      background: activeSessionId === s.id ? 'rgba(245, 158, 11, 0.12)' : 'rgba(255, 255, 255, 0.03)',
+                      border: activeSessionId === s.id ? '1px solid var(--border-amber)' : '1px solid var(--border-glass)',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s ease'
+                    }}
+                  >
+                    <div style={{ overflow: 'hidden', paddingRight: '0.5rem' }}>
+                      <div style={{ fontWeight: 600, fontSize: '0.875rem', color: activeSessionId === s.id ? 'var(--primary)' : '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {s.title}
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))', marginTop: '0.15rem' }}>
+                        {formatDate(s.created_at)} · {s.message_count || 0} mensajes
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      title="Borrar conversación"
+                      onClick={(e) => handleDeleteSession(s.id, e)}
+                      style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)', color: '#ef4444', cursor: 'pointer', padding: '0.3rem 0.6rem', borderRadius: '0.375rem', fontSize: '0.75rem', flexShrink: 0 }}
+                    >
+                      <i className="fa-solid fa-trash"></i>
+                    </button>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>,

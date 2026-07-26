@@ -167,9 +167,9 @@ export default function TranscriptionViewer({ transcriptionId, onDeleted }: Tran
 
           <button
             type="button"
-            className="btn btn-sm btn-danger"
+            className="btn-danger-glass"
             onClick={handleDelete}
-            style={{ background: '#ef4444', border: '1px solid #dc2626', color: '#fff', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+            style={{ background: 'rgba(239, 68, 68, 0.12)', border: '1px solid rgba(239, 68, 68, 0.35)', color: '#ef4444', borderRadius: '8px', padding: '0.45rem 0.9rem', fontSize: '0.8125rem', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', transition: 'all 0.2s ease' }}
           >
             <i className="fa-solid fa-trash"></i> Eliminar
           </button>

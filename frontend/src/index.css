@@ -1688,7 +1688,7 @@ select.form-control option {
 }
 
 /* ── Responsive Ergonomics & Mobile Breakpoints ── */
-@media (max-width: 1024px) {
+@media (max-width: 1280px) {
     .grid-layout, .grid-2col {
         grid-template-columns: 1fr !important;
         gap: 1.5rem !important;
@@ -1696,6 +1696,7 @@ select.form-control option {
     
     .main-content {
         padding: 1.5rem 1rem !important;
+        overflow-x: hidden !important;
     }
     
     .sidebar {
