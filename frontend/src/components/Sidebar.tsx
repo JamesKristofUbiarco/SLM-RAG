@@ -12,11 +12,11 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ activeTab, setActiveTab, serverStatus, gpuName, llmModel, hasHfToken, statusData }: SidebarProps) {
-  // Auto-open the accordion if the active tab is a child of "Ingestión"
   const ingestionChildren = ['transcription-tab', 'files-tab', 'youtube-tab', 'web-tab'];
   const [ingestionOpen, setIngestionOpen] = useState<boolean>(
     ingestionChildren.includes(activeTab)
   );
+  const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
 
   const flatItems = [
     { id: 'summary-tab',  label: 'Resúmenes',         icon: 'fa-file-invoice' },
@@ -25,19 +25,59 @@ export default function Sidebar({ activeTab, setActiveTab, serverStatus, gpuName
     { id: 'sources-tab',  label: 'Fuentes',            icon: 'fa-folder-open' },
   ];
 
+  const allNavItems = [
+    { id: 'transcription-tab', label: 'Transcripción', icon: 'fa-microphone' },
+    { id: 'files-tab',         label: 'Archivos',      icon: 'fa-file-lines' },
+    { id: 'youtube-tab',       label: 'YouTube',       icon: 'fa-brands fa-youtube', iconColor: '#ef4444' },
+    { id: 'web-tab',           label: 'Páginas Web',   icon: 'fa-solid fa-globe', iconColor: '#38bdf8' },
+    { id: 'summary-tab',       label: 'Resúmenes',     icon: 'fa-file-invoice' },
+    { id: 'chat-tab',          label: 'Chat RAG',       icon: 'fa-comments' },
+    { id: 'search-tab',        label: 'Búsqueda',      icon: 'fa-magnifying-glass' },
+    { id: 'sources-tab',       label: 'Fuentes',        icon: 'fa-folder-open' },
+  ];
+
   const isTaskRunning = Boolean(statusData?.is_running);
 
   return (
     <aside className="sidebar">
       <div className="brand">
-        <i className="fa-solid fa-brain brand-icon"></i>
-        <div className="brand-text">
-          <h1>SLM RAG</h1>
-          <span>Local AI Assistant</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <i className="fa-solid fa-brain brand-icon"></i>
+          <div className="brand-text">
+            <h1>SLM RAG</h1>
+            <span>Local AI Assistant</span>
+          </div>
         </div>
+
+        {/* Mobile Menu Toggle Button */}
+        <button
+          type="button"
+          className="mobile-menu-toggle"
+          onClick={() => setMobileMenuOpen(prev => !prev)}
+          aria-label="Abrir Menú"
+        >
+          <i className={`fa-solid ${mobileMenuOpen ? 'fa-xmark' : 'fa-bars'}`}></i>
+          <span>Navegación</span>
+        </button>
       </div>
 
-      <nav className="nav-menu">
+      {/* Mobile Flat Nav Scrollbar */}
+      <div className="mobile-nav-bar">
+        {allNavItems.map(item => (
+          <button
+            key={item.id}
+            type="button"
+            className={`mobile-nav-pill ${activeTab === item.id ? 'active' : ''}`}
+            onClick={() => { setActiveTab(item.id); setMobileMenuOpen(false); }}
+          >
+            <i className={item.icon} style={item.iconColor ? { color: item.iconColor } : undefined}></i>
+            <span>{item.label}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* Desktop / Collapsible Mobile Menu */}
+      <nav className={`nav-menu ${mobileMenuOpen ? 'mobile-expanded' : ''}`}>
         {/* ── Accordion: Ingestión ─────────────────────── */}
         <div className="nav-group">
           <button
@@ -55,28 +95,28 @@ export default function Sidebar({ activeTab, setActiveTab, serverStatus, gpuName
           <div className={`nav-group-children ${ingestionOpen ? 'open' : ''}`}>
             <button
               className={`nav-child-btn ${activeTab === 'transcription-tab' ? 'active' : ''}`}
-              onClick={() => setActiveTab('transcription-tab')}
+              onClick={() => { setActiveTab('transcription-tab'); setMobileMenuOpen(false); }}
             >
               <i className="fa-solid fa-microphone"></i>
               Transcripción
             </button>
             <button
               className={`nav-child-btn ${activeTab === 'files-tab' ? 'active' : ''}`}
-              onClick={() => setActiveTab('files-tab')}
+              onClick={() => { setActiveTab('files-tab'); setMobileMenuOpen(false); }}
             >
               <i className="fa-solid fa-file-lines"></i>
               Archivos
             </button>
             <button
               className={`nav-child-btn ${activeTab === 'youtube-tab' ? 'active' : ''}`}
-              onClick={() => setActiveTab('youtube-tab')}
+              onClick={() => { setActiveTab('youtube-tab'); setMobileMenuOpen(false); }}
             >
               <i className="fa-brands fa-youtube" style={{ color: '#ef4444' }}></i>
               YouTube
             </button>
             <button
               className={`nav-child-btn ${activeTab === 'web-tab' ? 'active' : ''}`}
-              onClick={() => setActiveTab('web-tab')}
+              onClick={() => { setActiveTab('web-tab'); setMobileMenuOpen(false); }}
             >
               <i className="fa-solid fa-globe" style={{ color: '#38bdf8' }}></i>
               Páginas Web
@@ -89,7 +129,7 @@ export default function Sidebar({ activeTab, setActiveTab, serverStatus, gpuName
           <button
             key={item.id}
             className={`nav-btn ${activeTab === item.id ? 'active' : ''}`}
-            onClick={() => setActiveTab(item.id)}
+            onClick={() => { setActiveTab(item.id); setMobileMenuOpen(false); }}
           >
             <i className={`fa-solid ${item.icon}`}></i>
             <span>{item.label}</span>

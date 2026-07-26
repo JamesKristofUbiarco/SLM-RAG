@@ -1704,7 +1704,30 @@ select.form-control option {
     }
 }
 
+.mobile-menu-toggle {
+    display: none;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.4rem 0.75rem;
+    border-radius: 0.5rem;
+    background: rgba(245, 158, 11, 0.15);
+    border: 1px solid var(--border-amber);
+    color: var(--primary);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.mobile-nav-bar {
+    display: none;
+}
+
 @media (max-width: 768px) {
+    html, body, #app {
+        max-width: 100vw !important;
+        overflow-x: hidden !important;
+    }
+
     #app {
         flex-direction: column !important;
     }
@@ -1714,22 +1737,63 @@ select.form-control option {
         height: auto !important;
         border-right: none !important;
         border-bottom: 1px solid var(--border-glass) !important;
-        padding: 1rem !important;
+        padding: 0.75rem 1rem !important;
+        flex-shrink: 0;
     }
     
     .brand {
-        margin-bottom: 1rem !important;
-    }
-    
-    .nav-menu {
-        flex-direction: row !important;
-        overflow-x: auto !important;
-        padding-bottom: 0.5rem !important;
+        margin-bottom: 0.5rem !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
     }
 
-    .nav-btn {
-        padding: 0.5rem 0.75rem !important;
-        white-space: nowrap !important;
+    .mobile-menu-toggle {
+        display: inline-flex !important;
+    }
+
+    .mobile-nav-bar {
+        display: flex !important;
+        gap: 0.4rem;
+        overflow-x: auto;
+        padding: 0.4rem 0;
+        margin-bottom: 0.5rem;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .mobile-nav-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.4rem 0.75rem;
+        border-radius: 0.5rem;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid var(--border-glass);
+        color: #94a3b8;
+        font-size: 0.78125rem;
+        white-space: nowrap;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+
+    .mobile-nav-pill.active {
+        background: linear-gradient(135deg, #f59e0b, #d97706);
+        color: #0e0e11;
+        font-weight: 600;
+        border-color: #f59e0b;
+    }
+
+    .nav-menu {
+        display: none !important;
+    }
+
+    .nav-menu.mobile-expanded {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 0.5rem !important;
+        margin-top: 0.5rem !important;
+        padding-top: 0.5rem !important;
+        border-top: 1px solid var(--border-glass) !important;
     }
     
     .form-row {
@@ -1737,13 +1801,20 @@ select.form-control option {
     }
     
     .main-content {
-        padding: 1rem !important;
+        padding: 1rem 0.75rem !important;
         height: auto !important;
+        overflow-x: hidden !important;
+        width: 100% !important;
+        box-sizing: border-box !important;
     }
 
     #chat-container-card {
-        height: 520px !important;
-        min-height: 520px !important;
+        height: 500px !important;
+        min-height: 500px !important;
+    }
+
+    .tab-toggle, .nav-pills, .form-row {
+        flex-wrap: wrap !important;
     }
 }
 

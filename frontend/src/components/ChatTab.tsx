@@ -539,7 +539,7 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
       </div>
 
       {/* Mode Selector Pill Bar */}
-      <div className="tab-toggle" style={{ marginBottom: '1rem' }}>
+      <div className="tab-toggle" style={{ marginBottom: '1rem', display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
         <button
           type="button"
           className={`toggle-btn ${searchMode === 'local' ? 'active' : ''}`}
