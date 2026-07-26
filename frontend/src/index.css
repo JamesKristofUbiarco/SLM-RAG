@@ -347,6 +347,12 @@ h1, h2, h3, h4 {
     align-items: start;
 }
 
+.status-panel-container {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem; /* 24px gap between Server Status and Historial cards */
+}
+
 /* Glass Card styling */
 .card {
     border-radius: var(--border-radius);
@@ -1334,19 +1340,30 @@ select.form-control option {
 }
 
 .btn-secondary {
-    background: linear-gradient(135deg, #4f46e5, #3b82f6);
-    color: #fff;
-    border: none;
-    transition: transform 0.2s ease, opacity 0.2s ease;
+    background: rgba(255, 255, 255, 0.05) !important;
+    color: var(--text-main) !important;
+    border: 1px solid var(--border-glass) !important;
+    padding: 0.5rem 1rem !important;
+    border-radius: var(--border-radius) !important;
+    font-family: var(--font-body) !important;
+    font-size: 0.8125rem !important;
+    font-weight: 500 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 0.4rem !important;
+    transition: var(--transition) !important;
 }
 
 .btn-secondary:hover {
-    transform: translateY(-1px);
-    opacity: 0.95;
+    background: rgba(255, 255, 255, 0.1) !important;
+    border-color: var(--border-amber) !important;
+    color: var(--primary) !important;
+    transform: translateY(-1px) !important;
 }
 
 .btn-secondary:active {
-    transform: translateY(0);
+    transform: translateY(0) !important;
 }
 
 .concat-drag-handle {
@@ -1671,7 +1688,66 @@ select.form-control option {
 }
 
 .mode-select-dropdown:hover, .mode-select-dropdown:focus {
-    border-color: #6366f1;
-    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.25);
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.25);
+}
+
+/* ── Responsive Ergonomics & Mobile Breakpoints ── */
+@media (max-width: 1024px) {
+    .grid-layout, .grid-2col {
+        grid-template-columns: 1fr !important;
+        gap: 1.5rem !important;
+    }
+    
+    .main-content {
+        padding: 1.5rem 1rem !important;
+    }
+    
+    .sidebar {
+        width: 240px;
+    }
+}
+
+@media (max-width: 768px) {
+    #app {
+        flex-direction: column !important;
+    }
+    
+    .sidebar {
+        width: 100% !important;
+        height: auto !important;
+        border-right: none !important;
+        border-bottom: 1px solid var(--border-glass) !important;
+        padding: 1rem !important;
+    }
+    
+    .brand {
+        margin-bottom: 1rem !important;
+    }
+    
+    .nav-menu {
+        flex-direction: row !important;
+        overflow-x: auto !important;
+        padding-bottom: 0.5rem !important;
+    }
+
+    .nav-btn {
+        padding: 0.5rem 0.75rem !important;
+        white-space: nowrap !important;
+    }
+    
+    .form-row {
+        grid-template-columns: 1fr !important;
+    }
+    
+    .main-content {
+        padding: 1rem !important;
+        height: auto !important;
+    }
+
+    #chat-container-card {
+        height: 520px !important;
+        min-height: 520px !important;
+    }
 }
 

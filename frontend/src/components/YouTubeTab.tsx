@@ -445,9 +445,9 @@ export default function YouTubeTab({
               <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem' }}>
                 <button
                   type="submit"
-                  className="btn"
+                  className="submit-btn"
                   disabled={isProcessing || !youtubeUrl.trim()}
-                  style={{ flex: 1, backgroundColor: '#ef4444', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
+                  style={{ flex: 1 }}
                 >
                   {isProcessing ? (
                     <><i className="fa-solid fa-spinner fa-spin"></i> Procesando YouTube...</>
@@ -511,9 +511,9 @@ export default function YouTubeTab({
 
               <button
                 type="submit"
-                className="btn"
+                className="submit-btn"
                 disabled={isProcessing || !batchUrlsText.trim()}
-                style={{ width: '100%', marginTop: '1rem', backgroundColor: 'var(--accent-light)', color: '#000', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
+                style={{ width: '100%', marginTop: '1rem' }}
               >
                 {isProcessing ? (
                   <><i className="fa-solid fa-spinner fa-spin"></i> Procesando Lote de YouTube en Cola...</>

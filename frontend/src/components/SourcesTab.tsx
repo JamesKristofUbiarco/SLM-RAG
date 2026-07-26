@@ -406,7 +406,7 @@ export default function SourcesTab({ transcriptionList, onRefresh, active }: Sou
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
             <button
               type="button"
-              className="btn btn-primary btn-sm"
+              className="submit-btn btn-sm"
               onClick={() => setShowProjectModal(true)}
               style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}
             >
@@ -421,15 +421,15 @@ export default function SourcesTab({ transcriptionList, onRefresh, active }: Sou
                   onClick={openMoveBatchModal}
                   style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}
                 >
-                  <i className="fa-solid fa-folder-open" style={{ color: '#a855f7' }}></i> Mover Seleccionados ({selectedIds.size})
+                  <i className="fa-solid fa-folder-open" style={{ color: 'var(--primary)' }}></i> Mover Seleccionados ({selectedIds.size})
                 </button>
 
                 <button
                   type="button"
-                  className="btn btn-sm"
+                  className="btn btn-sm btn-danger"
                   disabled={isDeleting}
                   onClick={promptDeleteSelected}
-                  style={{ background: 'linear-gradient(135deg, #ef4444, #dc2626)', color: 'white', display: 'inline-flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}
+                  style={{ background: '#ef4444', color: '#fff', border: '1px solid #dc2626', display: 'inline-flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}
                 >
                   {isDeleting ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-trash"></i>}
                   Eliminar Seleccionados ({selectedIds.size})
@@ -439,20 +439,18 @@ export default function SourcesTab({ transcriptionList, onRefresh, active }: Sou
           </div>
 
           {/* View Mode Selector */}
-          <div style={{ display: 'flex', gap: '0.25rem', background: 'rgba(255,255,255,0.05)', padding: '0.2rem', borderRadius: '0.375rem', border: '1px solid var(--border-glass)' }}>
+          <div className="tab-toggle" style={{ width: 'auto', padding: '0.25rem' }}>
             <button
               type="button"
-              className={`btn btn-sm ${viewMode === 'hierarchy' ? 'btn-primary' : ''}`}
+              className={`toggle-btn ${viewMode === 'hierarchy' ? 'active' : ''}`}
               onClick={() => setViewMode('hierarchy')}
-              style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem' }}
             >
               <i className="fa-solid fa-sitemap"></i> Vista Jerárquica
             </button>
             <button
               type="button"
-              className={`btn btn-sm ${viewMode === 'table' ? 'btn-primary' : ''}`}
+              className={`toggle-btn ${viewMode === 'table' ? 'active' : ''}`}
               onClick={() => setViewMode('table')}
-              style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem' }}
             >
               <i className="fa-solid fa-table-list"></i> Vista Tabla
             </button>

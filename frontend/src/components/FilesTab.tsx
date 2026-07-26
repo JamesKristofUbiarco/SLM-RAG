@@ -338,13 +338,12 @@ export default function FilesTab({ active, onIngested, onRedirectToTranscription
 
             {/* Ingest button */}
             {singleItem.compatible && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '1rem' }}>
                 <button
                   id="btn-ingest-file"
-                  className="btn btn-primary"
+                  className="submit-btn btn-full"
                   onClick={processBatch}
                   disabled={isProcessingBatch || singleItem.status === 'success'}
-                  style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
                 >
                   {isProcessingBatch ? (
                     <><i className="fa-solid fa-brain fa-spin"></i> Procesando con Visión AI & RAG...</>
@@ -358,20 +357,7 @@ export default function FilesTab({ active, onIngested, onRedirectToTranscription
                 {isProcessingBatch && (
                   <div className="files-compat-message compat-ok" style={{ marginTop: 0, opacity: 0.85 }}>
                     <i className="fa-solid fa-eye fa-pulse"></i>
-                    Analizando estructura y transcripción por visión multimodal con Gemma 4. Esto toma entre 15 y 30 segundos...
-                  </div>
-                )}
-
-                {singleItem.status === 'success' && singleItem.ingestMsg && (
-                  <div className="files-compat-message compat-ok" style={{ marginTop: 0 }}>
-                    <i className="fa-solid fa-circle-check"></i>
-                    {singleItem.ingestMsg}
-                  </div>
-                )}
-                {singleItem.status === 'error' && singleItem.ingestMsg && (
-                  <div className="files-compat-message compat-no" style={{ marginTop: 0 }}>
-                    <i className="fa-solid fa-circle-xmark"></i>
-                    {singleItem.ingestMsg}
+                    Extrayendo estructura con Docling & embeddings vectoriales...
                   </div>
                 )}
               </div>
@@ -407,7 +393,7 @@ export default function FilesTab({ active, onIngested, onRedirectToTranscription
                   </button>
                 )}
                 <button
-                  className="btn btn-primary"
+                  className="submit-btn"
                   onClick={processBatch}
                   disabled={isProcessingBatch || pendingCount === 0}
                   style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1rem' }}

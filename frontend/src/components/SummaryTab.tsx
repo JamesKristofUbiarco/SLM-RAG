@@ -271,9 +271,8 @@ export default function SummaryTab({ transcriptionList, activeId, setActiveId, a
 
                 <button 
                   type="button" 
-                  className="btn" 
+                  className="submit-btn" 
                   onClick={() => handleGenerateSummary(false)}
-                  style={{ width: 'auto', padding: '0.625rem 1.5rem' }}
                 >
                   <i className="fa-solid fa-wand-magic-sparkles"></i> Comenzar resumen LLM
                 </button>

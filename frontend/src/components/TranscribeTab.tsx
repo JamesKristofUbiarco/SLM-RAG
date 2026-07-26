@@ -633,13 +633,12 @@ export default function TranscribeTab({
               )}
 
               {/* Buttons */}
-              <div className="form-actions" style={{ display: 'flex', gap: '0.75rem' }}>
+              <div className="form-actions" style={{ display: 'flex', gap: '0.75rem', marginTop: '1.25rem' }}>
                 <button
                   type="submit"
                   id="btn-start-transcribe"
-                  className="btn btn-primary"
+                  className="submit-btn btn-full"
                   disabled={isProcessing}
-                  style={{ flex: 1 }}
                 >
                   {isProcessing ? (
                     <><i className="fa-solid fa-spinner fa-spin"></i> Transcribiendo...</>

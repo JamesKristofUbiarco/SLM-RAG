@@ -90,12 +90,16 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
     fetchChatSessions();
   }, [active]);
 
-  // Sync activeId from parent on initial load if available
+  // Sync activeId from parent or auto-select all available sources by default
   useEffect(() => {
-    if (activeId && selectedSourceIds.size === 0) {
-      setSelectedSourceIds(new Set([activeId]));
+    if (selectedSourceIds.size === 0 && transcriptionList.length > 0) {
+      if (activeId) {
+        setSelectedSourceIds(new Set([activeId]));
+      } else {
+        setSelectedSourceIds(new Set(transcriptionList.map(s => s.id)));
+      }
     }
-  }, [activeId]);
+  }, [activeId, transcriptionList]);
 
   // Auto-scroll to bottom of chat
   useEffect(() => {
@@ -485,7 +489,7 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
           <button
             type="button"
-            className="btn btn-primary btn-sm"
+            className="submit-btn btn-sm"
             onClick={handleNewConversation}
             style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}
           >
@@ -699,10 +703,10 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
             )}
 
             {/* FolderTree Selector Card */}
-            <div className="card glass-card" style={{ maxHeight: showSessionsPanel ? '300px' : '600px', display: 'flex', flexDirection: 'column' }}>
+            <div className="card glass-card" style={{ minHeight: '600px', height: 'calc(100vh - 220px)', display: 'flex', flexDirection: 'column', borderRadius: '12px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
                 <h3 style={{ margin: 0, fontSize: '0.95rem' }}>
-                  <i className="fa-solid fa-layer-group" style={{ color: '#818cf8', marginRight: '0.4rem' }}></i>
+                  <i className="fa-solid fa-layer-group" style={{ color: 'var(--primary)', marginRight: '0.4rem' }}></i>
                   Fuentes Locales del Chat
                 </h3>
                 <button 
@@ -735,9 +739,9 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
         )}
 
         {/* Right Side: Chat Container */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', width: '100%' }}>
           
-          <div className="card glass-card chat-card" id="chat-container-card" style={{ display: 'flex', flexDirection: 'column', height: '540px' }}>
+          <div className="card glass-card chat-card" id="chat-container-card" style={{ display: 'flex', flexDirection: 'column', minHeight: '600px', height: 'calc(100vh - 220px)', borderRadius: '12px' }}>
             
             {/* Active Session & Search Mode Badge Bar */}
             <div style={{ padding: '0.55rem 0.875rem', borderBottom: '1px solid var(--border-glass)', background: 'rgba(99, 102, 241, 0.08)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.8125rem', flexWrap: 'wrap', gap: '0.5rem' }}>

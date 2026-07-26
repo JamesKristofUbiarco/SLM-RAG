@@ -219,12 +219,11 @@ export default function WebTab({ active, onIngestionComplete }: WebTabProps) {
           )}
 
           {/* Submit Action Button */}
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
             <button
               type="submit"
-              className="btn btn-primary"
+              className="submit-btn btn-full"
               disabled={isProcessing}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}
             >
               {isProcessing ? (
                 <>

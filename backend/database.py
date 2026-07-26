@@ -5,14 +5,17 @@ from pathlib import Path
 from typing import List, Dict, Any, Tuple
 from config import settings
 
+DB_PATH = Path(__file__).parent.parent / "data" / "database.db"
+
 def get_db():
-    conn = sqlite3.connect(settings.db_path)
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
     return conn
 
 def init_db():
     # Make sure target directory exists
-    Path(settings.db_path).parent.mkdir(parents=True, exist_ok=True)
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with get_db() as conn:
         # Principal transcription history table
         conn.execute("""
