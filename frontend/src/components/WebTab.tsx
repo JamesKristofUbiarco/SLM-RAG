@@ -105,58 +105,64 @@ export default function WebTab({ active, onIngestionComplete }: WebTabProps) {
   };
 
   return (
-    <section id="web-tab" className={`tab-panel ${active ? 'active' : ''}`}>
-      <div className="panel-header">
-        <h2>Ingestión de Páginas Web</h2>
-        <p>Extrae artículos y sitios web usando Docling con filtro de Guardrails anti-Prompt Injection para tu sistema RAG.</p>
+    <section id="web-tab" className={`flex-col gap-6 w-full ${active ? 'flex' : 'hidden'}`}>
+      <div className="mb-1">
+        <h2 className="text-2xl font-semibold text-white tracking-tight mb-1">Ingestión de Páginas Web</h2>
+        <p className="text-sm text-zinc-400">Extrae artículos y sitios web usando Docling con filtro de Guardrails anti-Prompt Injection para tu sistema RAG.</p>
       </div>
 
-      <div className="card glass-card">
+      <div className="p-5 sm:p-6 rounded-xl bg-[#17171c]/75 border border-white/10 backdrop-blur-md shadow-xl flex flex-col gap-5 w-full">
         {/* Guardrails Shield Banner */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.75rem 1rem', background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.3)', borderRadius: '0.5rem', marginBottom: '1.25rem' }}>
-          <i className="fa-solid fa-shield-halved" style={{ color: '#10b981', fontSize: '1.4rem' }}></i>
+        <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center gap-3">
+          <i className="fa-solid fa-shield-halved text-emerald-400 text-2xl shrink-0"></i>
           <div>
-            <span style={{ fontWeight: 600, color: '#34d399', fontSize: '0.875rem', display: 'block' }}>
+            <span className="text-xs font-semibold text-emerald-400 block mb-0.5">
               Guardrails Anti-Prompt Injection Activo
             </span>
-            <span style={{ fontSize: '0.78125rem', color: '#a7f3d0', lineHeight: 1.4 }}>
-              Las webs ingeridas son sanitizadas automáticamente: eliminamos etiquetas invisibles y neutralizamos instrucciones de jailbreak (*system prompt, ignore instructions*) antes de vectorizarse.
+            <span className="text-[11px] text-emerald-200/80 leading-relaxed">
+              Las webs ingeridas son sanitizadas automáticamente: eliminamos etiquetas invisibles y neutralizamos instrucciones de jailbreak antes de vectorizarse.
             </span>
           </div>
         </div>
 
         {/* Input Mode Selector */}
-        <div className="tab-toggle" style={{ marginBottom: '1.25rem' }}>
+        <div className="grid grid-cols-2 gap-1.5 p-1.5 bg-black/40 border border-white/10 rounded-xl w-full">
           <button
             type="button"
-            className={`toggle-btn ${inputMode === 'single' ? 'active' : ''}`}
+            className={`flex items-center justify-center gap-2 py-2 px-3 text-xs font-medium rounded-lg transition-colors cursor-pointer ${
+              inputMode === 'single'
+                ? 'bg-amber-500/15 border border-amber-500/35 text-amber-400 font-semibold shadow-sm'
+                : 'text-zinc-400 hover:text-white hover:bg-white/5 border border-transparent'
+            }`}
             onClick={() => setInputMode('single')}
           >
-            <i className="fa-solid fa-globe" style={{ color: '#38bdf8' }}></i> URL Individual
+            <i className="fa-solid fa-globe text-sky-400"></i> URL Individual
           </button>
           <button
             type="button"
-            className={`toggle-btn ${inputMode === 'batch' ? 'active' : ''}`}
+            className={`flex items-center justify-center gap-2 py-2 px-3 text-xs font-medium rounded-lg transition-colors cursor-pointer ${
+              inputMode === 'batch'
+                ? 'bg-amber-500/15 border border-amber-500/35 text-amber-400 font-semibold shadow-sm'
+                : 'text-zinc-400 hover:text-white hover:bg-white/5 border border-transparent'
+            }`}
             onClick={() => setInputMode('batch')}
           >
-            <i className="fa-solid fa-layer-group" style={{ color: 'var(--accent-light)' }}></i> Procesar Lote de URLs
+            <i className="fa-solid fa-layer-group text-orange-400"></i> Procesar Lote de URLs
           </button>
         </div>
 
-        <form onSubmit={handleIngestWeb} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-          
+        <form onSubmit={handleIngestWeb} className="flex flex-col gap-4">
           {/* Destination Project & Folder Selection */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-            <div>
-              <label className="form-label" style={{ display: 'block', marginBottom: '0.35rem', fontSize: '0.8125rem' }}>Proyecto Destino (Opcional)</label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-zinc-300">Proyecto Destino (Opcional)</label>
               <select
-                className="form-control"
+                className="w-full bg-[#1e293b] border border-white/10 rounded-lg text-white p-2.5 text-xs focus:outline-none focus:border-amber-500 transition-colors"
                 value={selectedProjectId}
                 onChange={e => {
                   setSelectedProjectId(e.target.value ? Number(e.target.value) : '');
                   setSelectedFolderId('');
                 }}
-                style={{ width: '100%', padding: '0.625rem 0.75rem', background: 'rgba(20,24,38,0.95)', border: '1px solid var(--border-glass)', borderRadius: '0.375rem', color: '#fff' }}
               >
                 <option value="">-- Sin Proyecto (Fuentes Generales) --</option>
                 {projects.map(p => (
@@ -166,13 +172,12 @@ export default function WebTab({ active, onIngestionComplete }: WebTabProps) {
             </div>
 
             {selectedProjectId !== '' && (
-              <div>
-                <label className="form-label" style={{ display: 'block', marginBottom: '0.35rem', fontSize: '0.8125rem' }}>Carpeta Destino (Opcional)</label>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-300">Carpeta Destino (Opcional)</label>
                 <select
-                  className="form-control"
+                  className="w-full bg-[#1e293b] border border-white/10 rounded-lg text-white p-2.5 text-xs focus:outline-none focus:border-amber-500 transition-colors"
                   value={selectedFolderId}
                   onChange={e => setSelectedFolderId(e.target.value ? Number(e.target.value) : '')}
-                  style={{ width: '100%', padding: '0.625rem 0.75rem', background: 'rgba(20,24,38,0.95)', border: '1px solid var(--border-glass)', borderRadius: '0.375rem', color: '#fff' }}
                 >
                   <option value="">-- Raíz del Proyecto --</option>
                   {folders
@@ -187,64 +192,56 @@ export default function WebTab({ active, onIngestionComplete }: WebTabProps) {
 
           {/* URL Input */}
           {inputMode === 'single' ? (
-            <div>
-              <label className="form-label" style={{ display: 'block', marginBottom: '0.35rem', fontSize: '0.8125rem' }}>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-zinc-300">
                 Enlace de la Página Web *
               </label>
               <input
                 type="url"
-                className="form-control"
+                className="w-full bg-white/[0.03] border border-white/10 rounded-lg text-white px-3.5 py-2.5 text-sm focus:outline-none focus:border-amber-500 transition-colors"
                 placeholder="https://ejemplo.com/articulo-o-noticia"
                 value={singleUrl}
                 onChange={e => setSingleUrl(e.target.value)}
                 required
-                style={{ width: '100%', padding: '0.625rem 0.75rem', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)', borderRadius: '0.375rem', color: '#fff' }}
               />
             </div>
           ) : (
-            <div>
-              <label className="form-label" style={{ display: 'block', marginBottom: '0.35rem', fontSize: '0.8125rem' }}>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-zinc-300">
                 Lista de URLs (Una por línea) *
               </label>
               <textarea
-                className="form-control"
+                className="w-full bg-white/[0.03] border border-white/10 rounded-lg text-white font-mono p-3 text-xs focus:outline-none focus:border-amber-500 transition-colors leading-relaxed"
                 rows={5}
                 placeholder={"https://sitio1.com/articulo\nhttps://sitio2.org/investigacion"}
                 value={batchUrls}
                 onChange={e => setBatchUrls(e.target.value)}
                 required
-                style={{ width: '100%', padding: '0.625rem 0.75rem', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)', borderRadius: '0.375rem', color: '#fff', fontFamily: 'monospace', fontSize: '0.8125rem' }}
               />
             </div>
           )}
 
           {/* Submit Action Button */}
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
-            <button
-              type="submit"
-              className="submit-btn btn-full"
-              disabled={isProcessing}
-            >
-              {isProcessing ? (
-                <>
-                  <i className="fa-solid fa-spinner fa-spin"></i> Extrayendo con Docling...
-                </>
-              ) : (
-                <>
-                  <i className="fa-solid fa-cloud-arrow-down"></i> Extraer e Ingerir Páginas Web
-                </>
-              )}
-            </button>
-          </div>
+          <button
+            type="submit"
+            className="w-full py-3 px-5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-zinc-950 font-semibold text-xs rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 transition-all cursor-pointer disabled:opacity-50 mt-2"
+            disabled={isProcessing}
+          >
+            {isProcessing ? (
+              <><i className="fa-solid fa-spinner fa-spin"></i> Extrayendo con Docling...</>
+            ) : (
+              <><i className="fa-solid fa-cloud-arrow-down"></i> Extraer e Ingerir Páginas Web</>
+            )}
+          </button>
         </form>
 
         {/* Live Processing Log */}
         {statusLog.length > 0 && (
-          <div style={{ marginTop: '1.5rem', background: 'rgba(0,0,0,0.3)', padding: '1rem', borderRadius: '0.5rem', border: '1px solid var(--border-glass)' }}>
-            <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '0.875rem', color: '#cbd5e1' }}>
-              <i className="fa-solid fa-terminal" style={{ marginRight: '0.4rem', color: 'hsl(var(--primary))' }}></i> Log de Procesamiento
+          <div className="p-4 bg-black/40 rounded-xl border border-white/10 flex flex-col gap-2 mt-2">
+            <h4 className="text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
+              <i className="fa-solid fa-terminal text-amber-500"></i> Log de Procesamiento
             </h4>
-            <div style={{ fontFamily: 'monospace', fontSize: '0.78125rem', lineHeight: 1.6, color: '#e2e8f0' }}>
+            <div className="font-mono text-xs text-zinc-300 space-y-1 leading-relaxed">
               {statusLog.map((log, i) => (
                 <div key={i}>{log}</div>
               ))}
@@ -254,11 +251,11 @@ export default function WebTab({ active, onIngestionComplete }: WebTabProps) {
 
         {/* Success Card Summary */}
         {resultSummary && (
-          <div style={{ marginTop: '1.25rem', padding: '1rem', background: 'rgba(99, 102, 241, 0.1)', border: '1px solid rgba(99, 102, 241, 0.3)', borderRadius: '0.5rem' }}>
-            <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem', color: '#818cf8', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+          <div className="p-4 rounded-xl bg-indigo-500/10 border border-indigo-500/30 flex flex-col gap-2">
+            <h4 className="text-xs font-semibold text-indigo-400 flex items-center gap-1.5">
               <i className="fa-solid fa-circle-check"></i> Ingestión Finalizada con Éxito ({resultSummary.count} fuentes)
             </h4>
-            <ul style={{ margin: 0, paddingLeft: '1.25rem', fontSize: '0.8125rem', color: '#cbd5e1' }}>
+            <ul className="list-disc pl-5 text-xs text-zinc-300 space-y-1">
               {resultSummary.titles.map((t, idx) => (
                 <li key={idx}><strong>{t}</strong> (Indexada en RAG)</li>
               ))}

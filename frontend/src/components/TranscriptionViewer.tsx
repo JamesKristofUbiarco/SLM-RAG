@@ -122,9 +122,9 @@ export default function TranscriptionViewer({ transcriptionId, onDeleted }: Tran
 
   if (isLoading) {
     return (
-      <div className="card glass-card" style={{ textAlign: 'center', padding: '2rem', marginTop: '1rem' }}>
-        <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: '1.5rem', marginBottom: '0.5rem', color: 'hsl(var(--primary))' }}></i>
-        <p>Cargando grabador interactivo...</p>
+      <div className="p-8 text-center rounded-xl bg-[#17171c]/75 border border-white/10 mt-4">
+        <i className="fa-solid fa-spinner fa-spin text-2xl text-amber-500 mb-2"></i>
+        <p className="text-sm text-zinc-400">Cargando grabador interactivo...</p>
       </div>
     );
   }
@@ -132,20 +132,19 @@ export default function TranscriptionViewer({ transcriptionId, onDeleted }: Tran
   if (!data) return null;
 
   return (
-    <div className="card glass-card transcription-viewer-card" id="transcription-viewer-card" style={{ marginTop: '1.5rem' }}>
-      <div className="viewer-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.75rem', marginBottom: '1rem' }}>
-        <h3 id="transcribed-filename" style={{ margin: 0, fontSize: '1rem', wordBreak: 'break-all' }}>
+    <div className="p-5 sm:p-6 rounded-xl bg-[#17171c]/75 border border-white/10 backdrop-blur-md shadow-xl flex flex-col gap-4 w-full min-w-0 mt-4" id="transcription-viewer-card">
+      <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-white/10">
+        <h3 id="transcribed-filename" className="text-base font-semibold text-white break-all">
           {data.filename}
         </h3>
-        <div className="viewer-controls" style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
-          <div className="control-group" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <label htmlFor="speed-rate" style={{ fontSize: '0.8125rem' }}>Velocidad:</label>
+        <div className="flex items-center gap-4 flex-wrap">
+          <div className="flex items-center gap-2 text-xs text-zinc-400">
+            <span>Velocidad:</span>
             <select 
               id="speed-rate" 
-              className="small-control" 
+              className="bg-black/40 border border-white/10 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-amber-500" 
               value={playbackRate} 
               onChange={handleRateChange}
-              style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-glass)', borderRadius: '0.25rem', color: '#fff', fontSize: '0.8125rem', padding: '0.25rem' }}
             >
               <option value="0.75">0.75x</option>
               <option value="1">1.0x</option>
@@ -155,21 +154,20 @@ export default function TranscriptionViewer({ transcriptionId, onDeleted }: Tran
             </select>
           </div>
           
-          <label className="checkbox-container small-checkbox" style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8125rem', cursor: 'pointer' }}>
+          <label className="flex items-center gap-2 text-xs text-zinc-300 cursor-pointer select-none">
             <input 
               type="checkbox" 
+              className="w-4 h-4 accent-amber-500 rounded border-white/10 bg-white/5 cursor-pointer"
               checked={autoscroll} 
               onChange={(e) => setAutoscroll(e.target.checked)} 
             />
-            <span className="checkmark"></span>
             <span>Auto-scroll</span>
           </label>
 
           <button
             type="button"
-            className="btn-danger-glass"
+            className="px-3 py-1.5 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-xs font-semibold hover:bg-red-500/20 transition-colors flex items-center gap-1.5 cursor-pointer"
             onClick={handleDelete}
-            style={{ background: 'rgba(239, 68, 68, 0.12)', border: '1px solid rgba(239, 68, 68, 0.35)', color: '#ef4444', borderRadius: '8px', padding: '0.45rem 0.9rem', fontSize: '0.8125rem', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', transition: 'all 0.2s ease' }}
           >
             <i className="fa-solid fa-trash"></i> Eliminar
           </button>
@@ -177,30 +175,36 @@ export default function TranscriptionViewer({ transcriptionId, onDeleted }: Tran
       </div>
       
       {data.filepath && (
-        <div className="audio-player-container" style={{ margin: '1rem 0' }}>
+        <div className="my-2">
           <audio 
             ref={audioRef} 
             controls 
             onTimeUpdate={handleTimeUpdate}
             src={`/api/media?path=${encodeURIComponent(data.filepath)}`} 
-            style={{ width: '100%' }}
+            className="w-full h-10 rounded-lg outline-none"
           />
         </div>
       )}
       
       <div 
-        className="text-cascade-container" 
+        className="max-h-80 overflow-y-auto p-4 bg-black/30 rounded-xl border border-white/10 flex flex-col gap-4" 
         ref={cascadeRef} 
         id="text-cascade-container"
-        style={{ maxHeight: '300px', overflowY: 'auto', padding: '1rem', background: 'rgba(0,0,0,0.2)', borderRadius: '0.5rem', border: '1px solid var(--border-glass)' }}
       >
         {data.segments?.map((seg, segIdx) => {
           let speakerText = "Locutor";
-          let speakerClass = "spk-other";
+          let speakerColor = "bg-indigo-500/20 text-indigo-300 border-indigo-500/30";
           if (seg.speaker) {
             speakerText = seg.speaker;
             const spkNum = parseInt(seg.speaker.replace(/\D/g, '')) || 0;
-            speakerClass = `spk-${(spkNum % 5) + 1}`;
+            const colors = [
+              "bg-indigo-500/20 text-indigo-300 border-indigo-500/30",
+              "bg-purple-500/20 text-purple-300 border-purple-500/30",
+              "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
+              "bg-amber-500/20 text-amber-300 border-amber-500/30",
+              "bg-rose-500/20 text-rose-300 border-rose-500/30"
+            ];
+            speakerColor = colors[spkNum % colors.length];
           }
 
           // Build words list
@@ -223,24 +227,23 @@ export default function TranscriptionViewer({ transcriptionId, onDeleted }: Tran
           }
 
           return (
-            <div key={segIdx} className="transcript-segment" style={{ marginBottom: '1.25rem' }}>
-              <div className="segment-meta" style={{ display: 'flex', gap: '0.75rem', marginBottom: '0.375rem', fontSize: '0.75rem' }}>
-                <span className={`speaker-tag ${speakerClass}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', padding: '0.125rem 0.5rem', borderRadius: '1rem', fontWeight: 600 }}>
+            <div key={segIdx} className="flex flex-col gap-1.5">
+              <div className="flex items-center gap-2 text-xs">
+                <span className={`px-2 py-0.5 rounded-full border text-[11px] font-semibold flex items-center gap-1 ${speakerColor}`}>
                   <i className="fa-solid fa-user"></i> {speakerText}
                 </span>
-                <span className="timestamp-tag" style={{ color: 'hsl(var(--text-muted))' }}>
+                <span className="text-zinc-500 font-mono text-[11px]">
                   {formatTime(seg.start)} - {formatTime(seg.end)}
                 </span>
               </div>
-              <p className="transcription-paragraph" style={{ margin: 0 }}>
+              <p className="text-sm text-zinc-300 leading-relaxed">
                 {words.map((w, wIdx) => (
                   <span
                     key={wIdx}
-                    className="word-span"
+                    className="word-span hover:text-white hover:bg-white/10 rounded px-0.5 cursor-pointer transition-colors duration-150 inline-block"
                     data-start={w.start}
                     data-end={w.end}
                     onClick={() => handleWordClick(w.start)}
-                    style={{ cursor: 'pointer', margin: '0 0.125rem', transition: 'background-color 0.2s ease, color 0.2s ease' }}
                   >
                     {w.word}{' '}
                   </span>

@@ -112,35 +112,25 @@ interface FilesTabProps {
 
 export default function FilesTab({ active, onIngested, onRedirectToTranscription }: FilesTabProps) {
   const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [isDragOver, setIsDragOver] = useState<boolean>(false);
   const [isProcessingBatch, setIsProcessingBatch] = useState<boolean>(false);
-  const [isDragOver, setIsDragOver] = useState(false);
+  const [mediaRedirectFile, setMediaRedirectFile] = useState<File | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFiles = (files: FileList | Array<File> | null) => {
-    if (!files || files.length === 0) return;
-    const fileList = Array.from(files);
+  const addFilesToQueue = (files: File[]) => {
+    setMediaRedirectFile(null);
+    const audioOrVideo = files.find(f => AUDIO_VIDEO_EXTENSIONS.has(getExtension(f.name)) || f.type.startsWith('audio/') || f.type.startsWith('video/'));
+    if (audioOrVideo && onRedirectToTranscription) {
+      setMediaRedirectFile(audioOrVideo);
+    }
 
-    const mediaFiles: File[] = [];
-    const docFiles: File[] = [];
-
-    fileList.forEach(file => {
-      const ext = getExtension(file.name);
-      const isMedia = AUDIO_VIDEO_EXTENSIONS.has(ext) || file.type.startsWith('audio/') || file.type.startsWith('video/');
-      if (isMedia) {
-        mediaFiles.push(file);
-      } else {
-        docFiles.push(file);
-      }
+    const analyzed = files.map(analyzeQueueItem);
+    setQueue(prev => {
+      const existingNames = new Set(prev.map(i => i.file.name));
+      const filteredNew = analyzed.filter(i => !existingNames.has(i.file.name));
+      return [...prev, ...filteredNew];
     });
-
-    if (mediaFiles.length > 0 && onRedirectToTranscription) {
-      onRedirectToTranscription(mediaFiles[0]);
-    }
-
-    if (docFiles.length > 0) {
-      const newItems = docFiles.map(analyzeQueueItem);
-      setQueue(prev => [...prev, ...newItems]);
-    }
   };
 
   const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
@@ -156,247 +146,224 @@ export default function FilesTab({ active, onIngested, onRedirectToTranscription
   const handleDrop = (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setIsDragOver(false);
-    handleFiles(e.dataTransfer.files);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      addFilesToQueue(Array.from(e.dataTransfer.files));
+    }
   };
 
   const handleFileInputChange = (e: ChangeEvent<HTMLInputElement>) => {
-    handleFiles(e.target.files);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
+    if (e.target.files && e.target.files.length > 0) {
+      addFilesToQueue(Array.from(e.target.files));
     }
   };
 
   const removeItem = (id: string) => {
-    if (isProcessingBatch) return;
-    setQueue(prev => prev.filter(item => item.id !== id));
-  };
-
-  const clearCompleted = () => {
-    if (isProcessingBatch) return;
-    setQueue(prev => prev.filter(item => item.status !== 'success'));
+    setQueue(prev => prev.filter(i => i.id !== id));
   };
 
   const clearAll = () => {
-    if (isProcessingBatch) return;
     setQueue([]);
+    setMediaRedirectFile(null);
   };
 
-  // Sequential batch processing loop
+  const clearCompleted = () => {
+    setQueue(prev => prev.filter(i => i.status !== 'success'));
+  };
+
   const processBatch = async () => {
-    const pendingItems = queue.filter(item => item.compatible && item.status === 'pending');
-    if (pendingItems.length === 0 || isProcessingBatch) return;
+    const pendingItems = queue.filter(i => i.compatible && i.status === 'pending');
+    if (pendingItems.length === 0) return;
 
     setIsProcessingBatch(true);
 
     for (const item of pendingItems) {
-      setQueue(prev => prev.map(q => q.id === item.id ? { ...q, status: 'processing', ingestMsg: 'Analizando maquetación e indexando en RAG...' } : q));
+      setQueue(prev => prev.map(i => i.id === item.id ? { ...i, status: 'processing', ingestMsg: 'Analizando...' } : i));
 
       try {
         const formData = new FormData();
         formData.append('file', item.file);
-        const res = await fetch('/api/ingest_file', {
+
+        const res = await fetch('/api/ingest/file', {
           method: 'POST',
           body: formData,
         });
 
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({ detail: 'Error del servidor' }));
-          throw new Error(err.detail || 'Error desconocido');
-        }
-
         const data = await res.json();
-        const charCount = data.char_count || 0;
-        const chunkCount = Math.ceil(charCount / 800);
+        if (!res.ok) throw new Error(data.detail || 'Fallo al procesar el archivo');
 
-        setQueue(prev => prev.map(q => q.id === item.id ? {
-          ...q,
+        setQueue(prev => prev.map(i => i.id === item.id ? {
+          ...i,
           status: 'success',
-          charCount,
-          chunkCount,
-          ingestMsg: `Indexado correctamente — ${charCount.toLocaleString()} caracteres en ${chunkCount} fragmentos.`
-        } : q));
-
-        onIngested?.();
-      } catch (e: any) {
-        setQueue(prev => prev.map(q => q.id === item.id ? {
-          ...q,
+          ingestMsg: `Indexado (${data.char_count || 0} chars, ${data.chunk_count || 0} chunks)`,
+          charCount: data.char_count,
+          chunkCount: data.chunk_count
+        } : i));
+      } catch (err: any) {
+        setQueue(prev => prev.map(i => i.id === item.id ? {
+          ...i,
           status: 'error',
-          ingestMsg: e.message || 'Error al indexar el archivo en RAG.'
-        } : q));
+          ingestMsg: err.message || 'Error de indexación'
+        } : i));
       }
     }
 
     setIsProcessingBatch(false);
+    if (onIngested) onIngested();
   };
 
   const singleItem = queue.length === 1 ? queue[0] : null;
-  const pendingCount = queue.filter(item => item.compatible && item.status === 'pending').length;
-  const successCount = queue.filter(item => item.status === 'success').length;
-  const errorCount = queue.filter(item => item.status === 'error').length;
+  const pendingCount = queue.filter(i => i.compatible && i.status === 'pending').length;
+  const completedCount = queue.filter(i => i.status === 'success').length;
   const totalCount = queue.length;
-  const completedCount = successCount + errorCount;
   const progressPercent = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
 
   return (
-    <section id="files-tab" className={`tab-panel ${active ? 'active' : ''}`}>
-      <div className="section-header">
-        <h2><i className="fa-solid fa-folder-open"></i> Ingestión de Archivos (RAG)</h2>
-        <p className="section-description">
-          Sube documentos (.pdf, .docx, .pptx, código e imágenes). Soporta procesamiento individual y en lote secuencial para acelerar RAG sin saturar la VRAM.
-        </p>
+    <section id="files-tab" className={`flex-col gap-6 w-full ${active ? 'flex' : 'hidden'}`}>
+      <div className="mb-1">
+        <h2 className="text-2xl font-semibold text-white tracking-tight mb-1">Ingestión de Archivos de Texto y Documentos</h2>
+        <p className="text-sm text-zinc-400">Analiza e indexa archivos PDF, Word, imágenes y código fuente en la base de datos RAG usando Docling y Vision AI.</p>
       </div>
 
-      <div className="files-container" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-        {/* Dropzone with native .drop-zone CSS class */}
-        <div
-          className={`drop-zone ${isDragOver ? 'drag-active' : ''}`}
-          onClick={() => fileInputRef.current?.click()}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-          style={{ cursor: 'pointer' }}
-        >
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handleFileInputChange}
-            style={{ display: 'none' }}
-            multiple
-          />
-          <i
-            className="fa-solid fa-file-arrow-up drop-icon"
-            style={{ fontSize: '2.5rem', marginBottom: '0.5rem', color: '#818cf8' }}
-          ></i>
-          <span className="drop-text" style={{ fontSize: '1rem', fontWeight: 600 }}>
-            Haz clic o arrastra uno o varios archivos aquí
-          </span>
-          <span className="drop-text" style={{ fontSize: '0.85rem', opacity: 0.7 }}>
-            Soporta PDFs, Word, PowerPoint, imágenes (.png, .jpg), código fuente y texto plano.
-          </span>
-          {singleItem && (
-            <span className="file-name-label" style={{ marginTop: '0.5rem' }}>
-              <i className="fa-solid fa-paperclip"></i> {singleItem.file.name}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start w-full min-w-0">
+        {/* Upload Drop Zone Card */}
+        <div className="p-5 sm:p-6 rounded-xl bg-[#17171c]/75 border border-white/10 backdrop-blur-md shadow-xl flex flex-col gap-4 w-full">
+          <div 
+            className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer flex flex-col items-center gap-3 transition-colors ${
+              isDragOver ? 'border-amber-500 bg-amber-500/10' : 'border-white/15 bg-white/[0.01] hover:bg-white/[0.03] hover:border-amber-500'
+            }`}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <i className="fa-solid fa-cloud-arrow-up text-4xl text-zinc-500 mb-1"></i>
+            <span className="text-sm font-medium text-white">Arrastra archivos de texto/documentos aquí</span>
+            <span className="text-xs text-zinc-400">o haz clic para explorar en tu equipo (soporta múltiples archivos)</span>
+            <span className="text-[11px] text-amber-400 mt-2 font-mono">
+              Soporta: PDF, DOCX, PPTX, TXT, CSV, JSON, Markdown, Código e Imágenes (PNG, JPG, WebP)
             </span>
+
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileInputChange}
+              multiple
+              className="hidden"
+            />
+          </div>
+
+          {/* Media File Detected Redirect Banner */}
+          {mediaRedirectFile && (
+            <div className="p-3.5 rounded-lg bg-amber-500/15 border border-amber-500/30 flex items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2 text-amber-400 font-medium">
+                <i className="fa-solid fa-compact-disc text-base"></i>
+                <span>Detectado audio/video: <strong>{mediaRedirectFile.name}</strong></span>
+              </div>
+              <button
+                type="button"
+                className="px-3 py-1.5 rounded-md bg-amber-500 text-zinc-950 font-semibold cursor-pointer hover:bg-amber-400 transition-colors shrink-0"
+                onClick={() => onRedirectToTranscription && onRedirectToTranscription(mediaRedirectFile)}
+              >
+                Ir a Transcripción
+              </button>
+            </div>
           )}
         </div>
 
-        {/* ── Single File View (Exact Original Metadata Card) ─────────────────────── */}
+        {/* Single File Details Card */}
         {singleItem && (
-          <div className="files-metadata-card">
-            <div className="files-meta-header">
-              <span className="files-meta-type-badge">
-                <i className={`fa-solid ${singleItem.icon}`}></i>
+          <div className="p-5 sm:p-6 rounded-xl bg-[#17171c]/75 border border-white/10 backdrop-blur-md shadow-xl flex flex-col gap-4 w-full">
+            <div className="flex items-center justify-between pb-3 border-b border-white/10">
+              <h3 className="text-base font-semibold text-white flex items-center gap-2">
+                <i className={`fa-solid ${singleItem.icon} text-amber-500`}></i>
                 {singleItem.typeLabel}
-              </span>
-              <span
-                className={`files-compat-badge ${singleItem.compatible ? 'compat-ok' : 'compat-no'}`}
+              </h3>
+              <button 
+                type="button" 
+                className="text-xs text-zinc-400 hover:text-red-400 cursor-pointer"
+                onClick={() => removeItem(singleItem.id)}
               >
-                <i className={`fa-solid ${singleItem.compatible ? 'fa-circle-check' : 'fa-circle-xmark'}`}></i>
-                {singleItem.compatible ? 'Compatible' : 'No compatible'}
-              </span>
+                <i className="fa-solid fa-xmark"></i>
+              </button>
             </div>
 
-            <div className="files-meta-grid">
-              <div className="files-meta-item">
-                <span className="files-meta-label">
-                  <i className="fa-solid fa-file"></i> Nombre
-                </span>
-                <span className="files-meta-value" title={singleItem.file.name}>
-                  {singleItem.file.name}
-                </span>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              <div className="p-2.5 rounded-lg bg-white/[0.02] border border-white/10 flex flex-col gap-0.5">
+                <span className="text-zinc-500 font-medium"><i className="fa-solid fa-file mr-1"></i> Nombre</span>
+                <span className="text-white font-semibold truncate" title={singleItem.file.name}>{singleItem.file.name}</span>
               </div>
-              <div className="files-meta-item">
-                <span className="files-meta-label">
-                  <i className="fa-solid fa-tag"></i> Tipo MIME
-                </span>
-                <span className="files-meta-value">
-                  {singleItem.file.type || 'desconocido'}
-                </span>
+              <div className="p-2.5 rounded-lg bg-white/[0.02] border border-white/10 flex flex-col gap-0.5">
+                <span className="text-zinc-500 font-medium"><i className="fa-solid fa-tag mr-1"></i> Tipo MIME</span>
+                <span className="text-white font-semibold truncate">{singleItem.file.type || 'desconocido'}</span>
               </div>
-              <div className="files-meta-item">
-                <span className="files-meta-label">
-                  <i className="fa-solid fa-weight-hanging"></i> Tamaño
-                </span>
-                <span className="files-meta-value">
-                  {formatBytes(singleItem.file.size)}
-                </span>
+              <div className="p-2.5 rounded-lg bg-white/[0.02] border border-white/10 flex flex-col gap-0.5">
+                <span className="text-zinc-500 font-medium"><i className="fa-solid fa-weight-hanging mr-1"></i> Tamaño</span>
+                <span className="text-white font-semibold">{formatBytes(singleItem.file.size)}</span>
               </div>
-              <div className="files-meta-item">
-                <span className="files-meta-label">
-                  <i className="fa-solid fa-calendar"></i> Última modificación
-                </span>
-                <span className="files-meta-value">
-                  {formatDate(singleItem.file.lastModified)}
-                </span>
+              <div className="p-2.5 rounded-lg bg-white/[0.02] border border-white/10 flex flex-col gap-0.5">
+                <span className="text-zinc-500 font-medium"><i className="fa-solid fa-calendar mr-1"></i> Modificado</span>
+                <span className="text-white font-semibold">{formatDate(singleItem.file.lastModified)}</span>
               </div>
             </div>
 
-            <div className={`files-compat-message ${singleItem.compatible ? 'compat-ok' : 'compat-no'}`}>
+            <div className={`p-3 rounded-lg text-xs flex items-center gap-2 ${
+              singleItem.compatible ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400' : 'bg-red-500/10 border border-red-500/30 text-red-400'
+            }`}>
               <i className={`fa-solid ${singleItem.compatible ? 'fa-lightbulb' : 'fa-triangle-exclamation'}`}></i>
               {singleItem.compatibilityReason}
             </div>
 
-            {/* Ingest button */}
             {singleItem.compatible && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '1rem' }}>
-                <button
-                  id="btn-ingest-file"
-                  className="submit-btn btn-full"
-                  onClick={processBatch}
-                  disabled={isProcessingBatch || singleItem.status === 'success'}
-                >
-                  {isProcessingBatch ? (
-                    <><i className="fa-solid fa-brain fa-spin"></i> Procesando con Visión AI & RAG...</>
-                  ) : singleItem.status === 'success' ? (
-                    <><i className="fa-solid fa-circle-check"></i> Indexado Correctamente</>
-                  ) : (
-                    <><i className="fa-solid fa-database"></i> Agregar al RAG</>  
-                  )}
-                </button>
-
-                {isProcessingBatch && (
-                  <div className="files-compat-message compat-ok" style={{ marginTop: 0, opacity: 0.85 }}>
-                    <i className="fa-solid fa-eye fa-pulse"></i>
-                    Extrayendo estructura con Docling & embeddings vectoriales...
-                  </div>
+              <button
+                type="button"
+                id="btn-ingest-file"
+                className="w-full py-3 px-5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-zinc-950 font-semibold text-xs rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 transition-all cursor-pointer disabled:opacity-50 mt-1"
+                onClick={processBatch}
+                disabled={isProcessingBatch || singleItem.status === 'success'}
+              >
+                {isProcessingBatch ? (
+                  <><i className="fa-solid fa-brain fa-spin"></i> Procesando con Visión AI & RAG...</>
+                ) : singleItem.status === 'success' ? (
+                  <><i className="fa-solid fa-circle-check"></i> Indexado Correctamente</>
+                ) : (
+                  <><i className="fa-solid fa-database"></i> Agregar al RAG</>  
                 )}
-              </div>
+              </button>
             )}
           </div>
         )}
 
-        {/* ── Multi-File Batch Queue View ─────────────────────────────────── */}
+        {/* Multi-File Batch Queue View */}
         {queue.length > 1 && (
-          <div className="files-metadata-card">
-            <div className="queue-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+          <div className="p-5 sm:p-6 rounded-xl bg-[#17171c]/75 border border-white/10 backdrop-blur-md shadow-xl flex flex-col gap-4 w-full">
+            <div className="flex items-center justify-between flex-wrap gap-3 pb-2 border-b border-white/10">
               <div>
-                <h3 style={{ margin: 0, fontSize: '1.05rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#f8fafc' }}>
-                  <i className="fa-solid fa-list-check" style={{ color: '#818cf8' }}></i>
+                <h3 className="text-base font-semibold text-white flex items-center gap-2">
+                  <i className="fa-solid fa-list-check text-indigo-400"></i>
                   Cola de Procesamiento en Lote ({queue.length} archivos)
                 </h3>
                 {isProcessingBatch && (
-                  <span style={{ fontSize: '0.85rem', color: '#818cf8', marginTop: '0.2rem', display: 'inline-block' }}>
+                  <span className="text-xs text-indigo-400 mt-1 inline-block">
                     <i className="fa-solid fa-spinner fa-spin"></i> Procesando {completedCount + 1} de {totalCount} ({progressPercent}%)...
                   </span>
                 )}
               </div>
 
-              <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <div className="flex items-center gap-2">
                 {successCount > 0 && !isProcessingBatch && (
-                  <button className="btn btn-secondary" onClick={clearCompleted} style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem' }}>
+                  <button className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-white text-xs font-medium cursor-pointer" onClick={clearCompleted}>
                     <i className="fa-solid fa-broom"></i> Limpiar Completados
                   </button>
                 )}
                 {!isProcessingBatch && (
-                  <button className="btn btn-secondary" onClick={clearAll} style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem' }}>
+                  <button className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-white text-xs font-medium cursor-pointer" onClick={clearAll}>
                     <i className="fa-solid fa-trash-can"></i> Vaciar Cola
                   </button>
                 )}
                 <button
-                  className="submit-btn"
+                  className="py-1.5 px-4 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-xs rounded-lg flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                   onClick={processBatch}
                   disabled={isProcessingBatch || pendingCount === 0}
-                  style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1rem' }}
                 >
                   {isProcessingBatch ? (
                     <><i className="fa-solid fa-brain fa-spin"></i> Procesando Lote...</>
@@ -409,67 +376,61 @@ export default function FilesTab({ active, onIngested, onRedirectToTranscription
 
             {/* Batch Progress Bar */}
             {isProcessingBatch && (
-              <div style={{ width: '100%', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: '4px', height: '6px', overflow: 'hidden', marginBottom: '0.75rem' }}>
-                <div style={{ width: `${progressPercent}%`, backgroundColor: '#6366f1', height: '100%', transition: 'width 0.3s ease' }}></div>
+              <div className="w-full bg-white/10 rounded-full h-1.5 overflow-hidden">
+                <div className="bg-amber-500 h-full transition-all duration-300" style={{ width: `${progressPercent}%` }}></div>
               </div>
             )}
 
-            {/* Queue List Table */}
-            <div className="queue-list" style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+            {/* Queue List */}
+            <div className="flex flex-col gap-2 max-h-72 overflow-y-auto pr-1">
               {queue.map(item => (
                 <div
                   key={item.id}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '0.75rem 1rem',
-                    backgroundColor: 'rgba(255, 255, 255, 0.03)',
-                    border: item.status === 'processing' ? '1px solid #6366f1' : '1px solid rgba(255,255,255,0.08)',
-                    borderRadius: '6px',
-                    gap: '1rem',
-                    transition: 'all 0.2s ease'
-                  }}
+                  className={`p-3 rounded-lg border text-xs flex items-center justify-between gap-3 transition-colors ${
+                    item.status === 'processing'
+                      ? 'bg-indigo-500/15 border-indigo-500/40 text-indigo-300'
+                      : 'bg-white/[0.02] border-white/10 hover:bg-white/[0.04]'
+                  }`}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', flex: 1, minWidth: 0 }}>
-                    <i className={`fa-solid ${item.icon}`} style={{ fontSize: '1.3rem', color: '#818cf8', width: '24px', textAlign: 'center' }}></i>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.15rem' }}>
-                        <span style={{ fontWeight: 600, color: '#f8fafc', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={item.file.name}>
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <i className={`fa-solid ${item.icon} text-lg text-indigo-400 w-6 text-center`}></i>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-white truncate" title={item.file.name}>
                           {item.file.name}
                         </span>
-                        <span style={{ fontSize: '0.75rem', padding: '0.1rem 0.4rem', borderRadius: '4px', backgroundColor: 'rgba(255,255,255,0.08)', color: '#94a3b8' }}>
+                        <span className="px-1.5 py-0.5 rounded bg-white/10 text-zinc-400 text-[10px]">
                           {formatBytes(item.file.size)}
                         </span>
                       </div>
-                      <div style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
+                      <div className="text-[11px] text-zinc-400">
                         {item.ingestMsg || item.typeLabel}
                       </div>
                     </div>
                   </div>
 
                   {/* Status Badge */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                  <div className="flex items-center gap-2 shrink-0">
                     {item.status === 'pending' && (
-                      <span className="status-badge status-pending" style={{ padding: '0.2rem 0.6rem', borderRadius: '12px', fontSize: '0.75rem', backgroundColor: 'rgba(234, 179, 8, 0.15)', color: '#fde047', border: '1px solid rgba(234, 179, 8, 0.3)' }}>
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-yellow-500/15 text-yellow-300 border border-yellow-500/30">
                         <i className="fa-solid fa-clock"></i> Pendiente
                       </span>
                     )}
 
                     {item.status === 'processing' && (
-                      <span className="status-badge status-processing" style={{ padding: '0.2rem 0.6rem', borderRadius: '12px', fontSize: '0.75rem', backgroundColor: 'rgba(99, 102, 241, 0.2)', color: '#818cf8', border: '1px solid #6366f1' }}>
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">
                         <i className="fa-solid fa-spinner fa-spin"></i> Procesando...
                       </span>
                     )}
 
                     {item.status === 'success' && (
-                      <span className="status-badge status-success" style={{ padding: '0.2rem 0.6rem', borderRadius: '12px', fontSize: '0.75rem', backgroundColor: 'rgba(34, 197, 94, 0.15)', color: '#4ade80', border: '1px solid rgba(34, 197, 94, 0.3)' }}>
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
                         <i className="fa-solid fa-check"></i> Indexado
                       </span>
                     )}
 
                     {item.status === 'error' && (
-                      <span className="status-badge status-error" style={{ padding: '0.2rem 0.6rem', borderRadius: '12px', fontSize: '0.75rem', backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#f87171', border: '1px solid rgba(239, 68, 68, 0.3)' }}>
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-red-500/15 text-red-400 border border-red-500/30">
                         <i className="fa-solid fa-xmark"></i> Error
                       </span>
                     )}
@@ -477,7 +438,7 @@ export default function FilesTab({ active, onIngested, onRedirectToTranscription
                     {!isProcessingBatch && (
                       <button
                         onClick={() => removeItem(item.id)}
-                        style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '0.9rem', padding: '0.3rem', borderRadius: '4px' }}
+                        className="text-zinc-500 hover:text-red-400 cursor-pointer p-1"
                         title="Quitar de la cola"
                       >
                         <i className="fa-solid fa-xmark"></i>

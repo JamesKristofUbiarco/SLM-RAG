@@ -101,219 +101,16 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
     }
   }, [activeId, transcriptionList]);
 
-  // Auto-scroll to bottom of chat
+  // Auto-scroll chat bubbles to bottom
   useEffect(() => {
-    chatBubblesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isTyping]);
-
-  // Load chat history for active session or active sources
-  const loadChatHistoryForSession = async (sessionId: string) => {
-    try {
-      const res = await fetch(`/api/chat/history?session_id=${encodeURIComponent(sessionId)}`);
-      if (!res.ok) return;
-      const data = await res.json();
-
-      const mapped = data.map((item: any): Message => {
-        let sources = null;
-        if (item.context_sources) {
-          try {
-            sources = typeof item.context_sources === 'string' 
-              ? JSON.parse(item.context_sources) 
-              : item.context_sources;
-          } catch (e) {
-            sources = item.context_sources;
-          }
-        }
-        return {
-          role: item.role,
-          content: item.text,
-          sources: Array.isArray(sources) ? sources : null
-        };
-      });
-      setMessages(mapped);
-    } catch (err) {
-      console.error('Error loading session chat history:', err);
+    if (active) {
+      chatBubblesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  };
+  }, [messages, isTyping, active]);
 
-  // Switch to a past conversation session
-  const handleSelectSession = (session: ChatSession) => {
-    setActiveSessionId(session.id);
-    setIsNoSourcesConfirmed(false);
-    
-    if (session.context_sources) {
-      const ids = session.context_sources.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
-      if (ids.length > 0) {
-        setSelectedSourceIds(new Set(ids));
-      }
-    }
-    
-    loadChatHistoryForSession(session.id);
-    setShowSessionsPanel(false);
-  };
-
-  // Start a new empty conversation
-  const handleNewConversation = () => {
-    setActiveSessionId(null);
-    setMessages([]);
-    setIsNoSourcesConfirmed(false);
-    setShowSessionsPanel(false);
-  };
-
-  // Delete a chat session
-  const handleDeleteSession = async (sessionId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!confirm('¿Estás seguro de que deseas eliminar esta conversación del historial?')) return;
-
-    try {
-      const res = await fetch(`/api/chat/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' });
-      if (res.ok) {
-        if (activeSessionId === sessionId) {
-          setActiveSessionId(null);
-          setMessages([]);
-          setIsNoSourcesConfirmed(false);
-        }
-        await fetchChatSessions();
-      }
-    } catch (err) {
-      console.error('Error deleting session:', err);
-    }
-  };
-
-  // Promote web source to permanent project/folder in SQLite
-  const handlePromoteWebSource = async () => {
-    if (!promoteTargetUrl) return;
-    setIsPromoting(true);
-
-    try {
-      const res = await fetch('/api/web/promote_to_source', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url: promoteTargetUrl,
-          project_id: promoteProjectId !== '' ? Number(promoteProjectId) : null,
-          folder_id: promoteFolderId !== '' ? Number(promoteFolderId) : null
-        })
-      });
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || 'Fallo al guardar fuente web');
-      }
-
-      const data = await res.json();
-      alert(data.message || 'Fuente web guardada exitosamente en el proyecto.');
-      setPromoteTargetUrl(null);
-      await fetchProjectsAndFolders();
-    } catch (err: any) {
-      console.error(err);
-      alert(`Error al guardar fuente web: ${err.message}`);
-    } finally {
-      setIsPromoting(false);
-    }
-  };
-
-  // Export Chat Payload Helpers
-  const activeSessionObj = sessions.find(s => s.id === activeSessionId);
-
-  const buildExportPayload = () => {
-    return {
-      version: "1.0",
-      title: activeSessionObj ? activeSessionObj.title : "Conversación Exportada",
-      context_sources: activeSessionObj ? (activeSessionObj.context_sources || "") : "",
-      created_at: activeSessionObj ? activeSessionObj.created_at : new Date().toISOString(),
-      messages: messages.map(m => ({
-        role: m.role,
-        content: m.content
-      }))
-    };
-  };
-
-  const handleDownloadExportJson = () => {
-    const payload = buildExportPayload();
-    const jsonStr = JSON.stringify(payload, null, 2);
-    const blob = new Blob([jsonStr], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    const safeTitle = (payload.title || 'chat').replace(/[^a-z0-9]/gi, '_').toLowerCase();
-    a.download = `chat_${safeTitle}_${Date.now()}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const handleCopyExportClipboard = () => {
-    const payload = buildExportPayload();
-    const jsonStr = JSON.stringify(payload, null, 2);
-    navigator.clipboard.writeText(jsonStr);
-    setCopiedSuccess(true);
-    setTimeout(() => setCopiedSuccess(false), 2000);
-  };
-
-  const handleImportJsonFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      const text = evt.target?.result as string;
-      if (text) setImportJsonText(text);
-    };
-    reader.readAsText(file);
-  };
-
-  const handleExecuteImport = async () => {
-    if (!importJsonText.trim()) {
-      alert('Por favor pega un payload JSON o selecciona un archivo JSON válido.');
-      return;
-    }
-
-    let parsedPayload: any = null;
-    try {
-      parsedPayload = JSON.parse(importJsonText.trim());
-    } catch (err) {
-      alert('El texto proporcionado no es un JSON válido.');
-      return;
-    }
-
-    if (!parsedPayload.messages || !Array.isArray(parsedPayload.messages) || parsedPayload.messages.length === 0) {
-      alert('El payload JSON debe contener un arreglo "messages" no vacío.');
-      return;
-    }
-
-    setIsImporting(true);
-    try {
-      const res = await fetch('/api/chat/sessions/import', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(parsedPayload)
-      });
-
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.detail || 'Fallo al importar la conversación.');
-      }
-
-      const data = await res.json();
-      alert(`Conversación '${data.title}' importada con éxito (${data.message_count} mensajes).`);
-      
-      setShowImportModal(false);
-      setImportJsonText('');
-
-      // Refresh sessions and activate newly imported session
-      await fetchChatSessions();
-      setActiveSessionId(data.session_id);
-      await loadChatHistoryForSession(data.session_id);
-    } catch (err: any) {
-      console.error(err);
-      alert(`Error al importar conversación: ${err.message}`);
-    } finally {
-      setIsImporting(false);
-    }
-  };
-
-  // Toggle single source
+  // Toggle individual source selection
   const handleToggleSource = (id: number) => {
-    setSelectedSourceIds((prev) => {
+    setSelectedSourceIds(prev => {
       const next = new Set(prev);
       if (next.has(id)) {
         next.delete(id);
@@ -324,213 +121,347 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
     });
   };
 
-  // Toggle folder cascade
-  const handleToggleFolder = (folderId: number, childSourceIds: number[], childFolderIds: number[], forceState?: boolean) => {
-    setSelectedSourceIds((prev) => {
+  // Toggle all sources in a folder
+  const handleToggleFolder = (folderId: number) => {
+    const folderSources = transcriptionList.filter(s => s.folder_id === folderId).map(s => s.id);
+    if (folderSources.length === 0) return;
+
+    const allSelected = folderSources.every(id => selectedSourceIds.has(id));
+    setSelectedSourceIds(prev => {
       const next = new Set(prev);
-      if (forceState) {
-        childSourceIds.forEach(id => next.add(id));
+      if (allSelected) {
+        folderSources.forEach(id => next.delete(id));
       } else {
-        childSourceIds.forEach(id => next.delete(id));
+        folderSources.forEach(id => next.add(id));
       }
       return next;
     });
   };
 
-  // Toggle project cascade
-  const handleToggleProject = (projectId: number | null, childSourceIds: number[], forceState?: boolean) => {
-    setSelectedSourceIds((prev) => {
+  // Toggle all sources in a project
+  const handleToggleProject = (projectId: number) => {
+    const projectSources = transcriptionList.filter(s => s.project_id === projectId).map(s => s.id);
+    if (projectSources.length === 0) return;
+
+    const allSelected = projectSources.every(id => selectedSourceIds.has(id));
+    setSelectedSourceIds(prev => {
       const next = new Set(prev);
-      if (forceState) {
-        childSourceIds.forEach(id => next.add(id));
+      if (allSelected) {
+        projectSources.forEach(id => next.delete(id));
       } else {
-        childSourceIds.forEach(id => next.delete(id));
+        projectSources.forEach(id => next.add(id));
       }
       return next;
     });
   };
 
   const handleSelectAll = () => {
-    const all = transcriptionList.map(t => t.id);
-    setSelectedSourceIds(new Set(all));
+    setSelectedSourceIds(new Set(transcriptionList.map(s => s.id)));
   };
 
   const handleDeselectAll = () => {
     setSelectedSourceIds(new Set());
   };
 
-  // Core API submit function
-  const submitChatMessage = async (msgText: string) => {
+  const toggleAccordion = (idx: number) => {
+    setOpenedSourcesIdx(prev => ({ ...prev, [idx]: !prev[idx] }));
+  };
+
+  // Switch to a new clean conversation
+  const handleNewConversation = () => {
+    setActiveSessionId(null);
+    setMessages([]);
+    setIsNoSourcesConfirmed(false);
+  };
+
+  // Load a chat session from history
+  const handleSelectSession = async (session: ChatSession) => {
+    setActiveSessionId(session.id);
+    setShowSessionsPanel(false);
+    try {
+      const res = await fetch(`/api/chat/sessions/${session.id}`);
+      if (res.ok) {
+        const data = await res.json();
+        setMessages(data.messages || []);
+        if (data.source_ids && data.source_ids.length > 0) {
+          setSelectedSourceIds(new Set(data.source_ids));
+        }
+      }
+    } catch (e) {
+      console.error('Error loading chat session payload:', e);
+    }
+  };
+
+  // Delete a chat session
+  const handleDeleteSession = async (sessionId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm('¿Eliminar esta conversación del historial?')) return;
+    try {
+      const res = await fetch(`/api/chat/sessions/${sessionId}`, { method: 'DELETE' });
+      if (res.ok) {
+        if (activeSessionId === sessionId) {
+          handleNewConversation();
+        }
+        fetchChatSessions();
+      }
+    } catch (err) {
+      console.error('Error deleting session:', err);
+    }
+  };
+
+  // Export session JSON download
+  const handleDownloadExportJson = () => {
+    if (messages.length === 0) return;
+    const payload = {
+      session_id: activeSessionId || `session_${Date.now()}`,
+      title: messages[0]?.content?.substring(0, 40) || 'Conversación RAG',
+      created_at: new Date().toISOString(),
+      source_ids: Array.from(selectedSourceIds),
+      search_mode: searchMode,
+      messages: messages
+    };
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `chat_export_${payload.session_id}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Copy export payload to clipboard
+  const handleCopyExportClipboard = () => {
+    if (messages.length === 0) return;
+    const payload = {
+      session_id: activeSessionId || `session_${Date.now()}`,
+      title: messages[0]?.content?.substring(0, 40) || 'Conversación RAG',
+      created_at: new Date().toISOString(),
+      source_ids: Array.from(selectedSourceIds),
+      search_mode: searchMode,
+      messages: messages
+    };
+    navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+    setCopiedSuccess(true);
+    setTimeout(() => setCopiedSuccess(false), 2500);
+  };
+
+  // Execute import payload
+  const handleExecuteImport = async () => {
+    if (!importJsonText.trim()) return;
+    setIsImporting(true);
+    try {
+      const payload = JSON.parse(importJsonText);
+      const res = await fetch('/api/chat/sessions/import', {
+        method: 'POST',
+        headers: { 'Content-[#Type]': 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) throw new Error('Falló al importar la sesión.');
+      const data = await res.json();
+      
+      await fetchChatSessions();
+      setActiveSessionId(data.session_id);
+      setMessages(payload.messages || []);
+      if (payload.source_ids) {
+        setSelectedSourceIds(new Set(payload.source_ids));
+      }
+      setShowImportModal(false);
+      setImportJsonText('');
+      alert('¡Conversación importada con éxito!');
+    } catch (e: any) {
+      alert(`Error al importar JSON: ${e.message}`);
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  const handleImportJsonFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      if (evt.target?.result) {
+        setImportJsonText(evt.target.result as string);
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  // Save/Promote Web Source to Permanent Project
+  const handlePromoteWebSource = async () => {
+    if (!promoteTargetUrl) return;
+    setIsPromoting(true);
+    try {
+      const res = await fetch('/api/web/ingest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          urls: [promoteTargetUrl],
+          project_id: promoteProjectId !== '' ? promoteProjectId : null,
+          folder_id: promoteFolderId !== '' ? promoteFolderId : null
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Error al guardar fuente web.');
+
+      alert(`¡Página web guardada con éxito en tu biblioteca permanentemente!`);
+      setPromoteTargetUrl(null);
+      fetchProjectsAndFolders();
+    } catch (err: any) {
+      alert(`Error al guardar fuente web: ${err.message}`);
+    } finally {
+      setIsPromoting(false);
+    }
+  };
+
+  // Primary Send Message Action
+  const handleSendMessage = async (e: FormEvent) => {
+    e.preventDefault();
+    const query = inputVal.trim();
+    if (!query || isTyping) return;
+
+    // Check if user is in 'local' mode without any selected sources
+    if (searchMode === 'local' && selectedSourceIds.size === 0 && !isNoSourcesConfirmed) {
+      setPendingMessage(query);
+      setShowNoSourcesModal(true);
+      return;
+    }
+
+    await dispatchQuery(query);
+  };
+
+  const handleAcceptNoSources = async () => {
+    setIsNoSourcesConfirmed(true);
+    setShowNoSourcesModal(false);
+    if (pendingMessage) {
+      const q = pendingMessage;
+      setPendingMessage('');
+      await dispatchQuery(q);
+    }
+  };
+
+  const handleRejectNoSources = () => {
+    setShowNoSourcesModal(false);
+    setPendingMessage('');
+    setShowSelectorCard(true);
+  };
+
+  const dispatchQuery = async (queryText: string) => {
+    const userMsg: Message = { role: 'user', content: queryText };
+    setMessages(prev => [...prev, userMsg]);
     setInputVal('');
-    // Optimistic user message update
-    setMessages((prev) => [...prev, { role: 'user', content: msgText }]);
     setIsTyping(true);
 
     try {
-      const idsStr = Array.from(selectedSourceIds).join(',');
-      const formData = new FormData();
-      if (activeSessionId) {
-        formData.append('session_id', activeSessionId);
-      }
-      formData.append('transcription_ids', idsStr);
-      formData.append('message', msgText);
-      formData.append('search_mode', searchMode);
-      formData.append('search_depth', searchDepth);
-      if (timeFilter) formData.append('time_filter', timeFilter);
-      if (domainFilter) formData.append('domain_filter', domainFilter);
-      formData.append('similarity_threshold', similarityThreshold.toString());
+      const payload = {
+        session_id: activeSessionId,
+        query: queryText,
+        source_ids: Array.from(selectedSourceIds),
+        search_mode: searchMode,
+        search_depth: searchDepth,
+        time_filter: timeFilter || null,
+        domain_filter: domainFilter || null,
+        similarity_threshold: similarityThreshold,
+        history: messages.slice(-10).map(m => ({ role: m.role, content: m.content }))
+      };
 
-      const res = await fetch('/api/chat', {
+      const response = await fetch('/api/chat', {
         method: 'POST',
-        body: formData
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
       });
 
-      if (!res.ok) throw new Error('Error al conectar con la API.');
-      const data = await res.json();
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Error al procesar consulta de Chat RAG.');
 
-      if (data.session_id && data.session_id !== activeSessionId) {
+      if (data.session_id && !activeSessionId) {
         setActiveSessionId(data.session_id);
+        fetchChatSessions();
       }
 
-      setMessages((prev) => [
-        ...prev, 
-        { 
-          role: 'assistant', 
-          content: data.response, 
-          sources: data.context_sources,
-          web_sources: data.web_sources,
-          search_logs: data.search_logs
-        }
-      ]);
+      const assistantMsg: Message = {
+        role: 'assistant',
+        content: data.answer || 'Sin respuesta generada.',
+        sources: data.sources || [],
+        web_sources: data.web_sources || [],
+        search_logs: data.search_logs || []
+      };
 
-      await fetchChatSessions();
-    } catch (err) {
-      console.error(err);
-      setMessages((prev) => [
-        ...prev, 
-        { 
-          role: 'assistant', 
-          content: 'Error: No se pudo obtener respuesta del modelo local.' 
-        }
+      setMessages(prev => [...prev, assistantMsg]);
+    } catch (err: any) {
+      setMessages(prev => [
+        ...prev,
+        { role: 'assistant', content: `❌ Error de RAG: ${err.message}` }
       ]);
     } finally {
       setIsTyping(false);
     }
   };
 
-  const handleSendMessage = async (e: FormEvent) => {
-    e.preventDefault();
-    const cleanMsg = inputVal.trim();
-    if (!cleanMsg) return;
-
-    // Check if in Local mode without sources selected and warning not yet confirmed
-    if (searchMode === 'local' && selectedSourceIds.size === 0 && !isNoSourcesConfirmed) {
-      setPendingMessage(cleanMsg);
-      setShowNoSourcesModal(true);
-      return;
-    }
-
-    await submitChatMessage(cleanMsg);
-  };
-
-  // Accept modal warning: set confirmed flag and submit pending message
-  const handleAcceptNoSources = async () => {
-    setIsNoSourcesConfirmed(true);
-    setShowNoSourcesModal(false);
-    const msg = pendingMessage;
-    setPendingMessage('');
-    if (msg) {
-      await submitChatMessage(msg);
-    }
-  };
-
-  // Reject modal warning: close modal without setting confirmed flag
-  const handleRejectNoSources = () => {
-    setShowNoSourcesModal(false);
-    setPendingMessage('');
-  };
-
-  const toggleAccordion = (msgIdx: number) => {
-    setOpenedSourcesIdx((prev) => ({
-      ...prev,
-      [msgIdx]: !prev[msgIdx]
-    }));
-  };
-
-  const renderMarkdown = (text?: string) => {
+  const renderMarkdown = (text: string) => {
     if (!text) return { __html: '' };
-    return { __html: marked.parse(text) as string };
+    marked.use({ breaks: true, gfm: true });
+    const rawHtml = marked.parse(text) as string;
+    return { __html: rawHtml };
   };
 
-  const formatDate = (dateStr?: string) => {
-    if (!dateStr) return '';
-    try {
-      const dateObj = new Date(dateStr.replace(' ', 'T'));
-      return dateObj.toLocaleDateString('es-ES', {
-        day: 'numeric',
-        month: 'short',
-        hour: '2-digit',
-        minute: '2-digit'
-      });
-    } catch (e) {
-      return dateStr;
-    }
+  const formatDate = (isoStr?: string) => {
+    if (!isoStr) return '';
+    return isoStr.substring(0, 16).replace('T', ' ');
   };
+
+  const activeSessionObj = sessions.find(s => s.id === activeSessionId);
 
   return (
-    <section id="chat-tab" className={`tab-panel ${active ? 'active' : ''}`}>
-      <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
+    <section id="chat-tab" className={`flex-col gap-6 w-full ${active ? 'flex' : 'hidden'}`}>
+      {/* Top Header */}
+      <div className="flex items-center justify-between flex-wrap gap-4 mb-1">
         <div>
-          <h2>Chat Multi-Fuente y Búsqueda Web Agentica</h2>
-          <p>Consulta tus documentos locales o investiga en la web en tiempo real con transparencia total e inspección RAG.</p>
+          <h2 className="text-2xl font-semibold text-white tracking-tight mb-1">Chat RAG Agentico</h2>
+          <p className="text-sm text-zinc-400">Consulta de forma inteligente sobre múltiples fuentes locales o investiga en la web con sintesis en tiempo real.</p>
         </div>
 
-        {/* Global Chat Toolbar */}
-        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             type="button"
-            className="submit-btn btn-sm"
-            onClick={handleNewConversation}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}
-          >
-            <i className="fa-solid fa-plus"></i> Nueva Conversación
-          </button>
-
-          <button
-            type="button"
-            className={`btn btn-sm ${showSessionsPanel ? 'submit-btn' : 'btn-secondary'}`}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors ${
+              showSessionsPanel 
+                ? 'bg-amber-500 text-zinc-950 shadow-md shadow-amber-500/20' 
+                : 'bg-white/10 text-white hover:bg-white/15 border border-white/10'
+            }`}
             onClick={() => setShowSessionsPanel(!showSessionsPanel)}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}
           >
             <i className="fa-solid fa-clock-rotate-left"></i> Historial ({sessions.length})
           </button>
 
           <button
             type="button"
-            className="btn btn-sm btn-secondary"
+            className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             onClick={() => setShowExportModal(true)}
             disabled={messages.length === 0}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', cursor: messages.length === 0 ? 'not-allowed' : 'pointer' }}
             title="Exportar payload completo del chat"
           >
-            <i className="fa-solid fa-file-export" style={{ color: '#38bdf8' }}></i> Exportar
+            <i className="fa-solid fa-file-export text-sky-400"></i> Exportar
           </button>
 
           <button
             type="button"
-            className="btn btn-sm btn-secondary"
+            className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
             onClick={() => setShowImportModal(true)}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}
             title="Importar conversación desde JSON"
           >
-            <i className="fa-solid fa-file-import" style={{ color: '#10b981' }}></i> Importar
+            <i className="fa-solid fa-file-import text-emerald-400"></i> Importar
           </button>
 
           <button
             type="button"
-            className={`btn btn-sm ${showSearchSettings ? 'btn-primary' : 'btn-secondary'}`}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors ${
+              showSearchSettings
+                ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+                : 'bg-white/10 text-white hover:bg-white/15 border border-white/10'
+            }`}
             onClick={() => setShowSearchSettings(!showSearchSettings)}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}
             title="Ajustes de Búsqueda y Parámetros RAG"
           >
             <i className="fa-solid fa-sliders"></i> Ajustes Web
@@ -539,61 +470,78 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
       </div>
 
       {/* Mode Selector Pill Bar */}
-      <div className="tab-toggle" style={{ marginBottom: '1rem', display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 w-full mb-1">
         <button
           type="button"
-          className={`toggle-btn ${searchMode === 'local' ? 'active' : ''}`}
+          className={`flex items-center justify-center gap-2 p-3 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+            searchMode === 'local'
+              ? 'bg-amber-500/15 border-amber-500/40 text-amber-400 shadow-md shadow-amber-500/10'
+              : 'bg-white/[0.02] border-white/10 text-zinc-400 hover:text-white hover:bg-white/[0.04]'
+          }`}
           onClick={() => setSearchMode('local')}
         >
-          <i className="fa-solid fa-folder-open" style={{ color: 'var(--primary)' }}></i> 1. Solo Fuentes Locales ({selectedSourceIds.size})
+          <i className="fa-solid fa-folder-open text-amber-500"></i> 1. Solo Fuentes Locales ({selectedSourceIds.size})
         </button>
+
         <button
           type="button"
-          className={`toggle-btn ${searchMode === 'web' ? 'active' : ''}`}
+          className={`flex items-center justify-center gap-2 p-3 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+            searchMode === 'web'
+              ? 'bg-amber-500/15 border-amber-500/40 text-amber-400 shadow-md shadow-amber-500/10'
+              : 'bg-white/[0.02] border-white/10 text-zinc-400 hover:text-white hover:bg-white/[0.04]'
+          }`}
           onClick={() => setSearchMode('web')}
         >
-          <i className="fa-solid fa-globe" style={{ color: 'var(--primary)' }}></i> 2. Búsqueda Web Agentica
+          <i className="fa-solid fa-globe text-sky-400"></i> 2. Búsqueda Web Agentica
         </button>
+
         <button
           type="button"
-          className={`toggle-btn ${searchMode === 'hybrid' ? 'active' : ''}`}
+          className={`flex items-center justify-center gap-2 p-3 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+            searchMode === 'hybrid'
+              ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400 shadow-md shadow-emerald-500/10'
+              : 'bg-white/[0.02] border-white/10 text-zinc-400 hover:text-white hover:bg-white/[0.04]'
+          }`}
           onClick={() => setSearchMode('hybrid')}
         >
-          <i className="fa-solid fa-dna" style={{ color: 'var(--accent)' }}></i> 3. Híbrido (Locales + Web)
+          <i className="fa-solid fa-dna text-emerald-400"></i> 3. Híbrido (Locales + Web)
         </button>
       </div>
 
       {/* Advanced Search Parameters Panel */}
       {showSearchSettings && (
-        <div className="card glass-card" style={{ marginBottom: '1.25rem', padding: '1.25rem', border: '1px solid var(--border-amber)', background: 'var(--bg-card)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-            <h4 style={{ margin: 0, fontSize: '0.9rem', color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+        <div className="p-4 sm:p-5 rounded-xl bg-[#17171c] border border-amber-500/40 shadow-xl flex flex-col gap-4 mb-2">
+          <div className="flex items-center justify-between">
+            <h4 className="text-xs font-semibold text-amber-400 flex items-center gap-2">
               <i className="fa-solid fa-sliders"></i> Controles de Búsqueda Web y Precisión RAG
             </h4>
-            <button className="btn btn-sm btn-secondary" onClick={() => setShowSearchSettings(false)} style={{ fontSize: '0.7rem' }}>Cerrar</button>
+            <button 
+              className="text-xs text-zinc-400 hover:text-white px-2 py-1 bg-white/5 rounded cursor-pointer"
+              onClick={() => setShowSearchSettings(false)}
+            >
+              Cerrar
+            </button>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
-            <div>
-              <label className="form-label" style={{ display: 'block', marginBottom: '0.35rem', fontSize: '0.78125rem' }}>Profundidad de Búsqueda</label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-zinc-300 font-medium">Profundidad de Búsqueda</label>
               <select
-                className="form-control"
+                className="bg-[#1e293b] border border-white/10 rounded-lg text-white p-2 focus:outline-none focus:border-amber-500"
                 value={searchDepth}
                 onChange={e => setSearchDepth(e.target.value as 'quick' | 'deep')}
-                style={{ width: '100%', padding: '0.4rem 0.6rem', fontSize: '0.8125rem', background: 'rgba(255,255,255,0.03)' }}
               >
                 <option value="quick">⚡ Rápida (3 URLs / Top 4 chunks)</option>
                 <option value="deep">🔬 Profunda (6 URLs / Top 10 chunks)</option>
               </select>
             </div>
 
-            <div>
-              <label className="form-label" style={{ display: 'block', marginBottom: '0.35rem', fontSize: '0.78125rem' }}>Filtro Temporal</label>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-zinc-300 font-medium">Filtro Temporal</label>
               <select
-                className="form-control"
+                className="bg-[#1e293b] border border-white/10 rounded-lg text-white p-2 focus:outline-none focus:border-amber-500"
                 value={timeFilter}
                 onChange={e => setTimeFilter(e.target.value)}
-                style={{ width: '100%', padding: '0.4rem 0.6rem', fontSize: '0.8125rem', background: 'rgba(255,255,255,0.03)' }}
               >
                 <option value="">Cualquier momento</option>
                 <option value="day">Últimas 24 horas</option>
@@ -603,21 +551,20 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
               </select>
             </div>
 
-            <div>
-              <label className="form-label" style={{ display: 'block', marginBottom: '0.35rem', fontSize: '0.78125rem' }}>Filtro de Dominios (Opcional)</label>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-zinc-300 font-medium">Filtro de Dominios (Opcional)</label>
               <input
                 type="text"
-                className="form-control"
+                className="bg-[#1e293b] border border-white/10 rounded-lg text-white p-2 focus:outline-none focus:border-amber-500"
                 placeholder="Ej. arxiv.org, github.com"
                 value={domainFilter}
                 onChange={e => setDomainFilter(e.target.value)}
-                style={{ width: '100%', padding: '0.4rem 0.6rem', fontSize: '0.8125rem', background: 'rgba(255,255,255,0.03)' }}
               />
             </div>
 
-            <div>
-              <label className="form-label" style={{ display: 'block', marginBottom: '0.35rem', fontSize: '0.78125rem' }}>
-                Umbral de Similitud Vectorial ({Math.round(similarityThreshold * 100)}%)
+            <div className="flex flex-col gap-1.5">
+              <label className="text-zinc-300 font-medium">
+                Umbral Vectorial ({Math.round(similarityThreshold * 100)}%)
               </label>
               <input
                 type="range"
@@ -626,7 +573,7 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
                 step="0.05"
                 value={similarityThreshold}
                 onChange={e => setSimilarityThreshold(parseFloat(e.target.value))}
-                style={{ width: '100%', cursor: 'pointer' }}
+                className="accent-amber-500 cursor-pointer my-auto"
               />
             </div>
           </div>
@@ -634,30 +581,30 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
       )}
 
       {/* Main Layout Grid */}
-      <div className="grid-2col" style={{ display: 'grid', gridTemplateColumns: (showSelectorCard && searchMode !== 'web') ? '340px 1fr' : '1fr', gap: '1.25rem', alignItems: 'start' }}>
+      <div className={`grid gap-6 items-start w-full min-w-0 ${
+        (showSelectorCard && searchMode !== 'web') ? 'grid-cols-1 lg:grid-cols-[320px_1fr]' : 'grid-cols-1'
+      }`}>
         
-        {/* Left Side: Multi-Source Selector Panel (Only if not Web-Only mode) */}
+        {/* Left Side: Multi-Source Selector Panel */}
         {showSelectorCard && searchMode !== 'web' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            {/* FolderTree Selector Card */}
-            <div className="card glass-card" style={{ minHeight: '480px', height: 'calc(100vh - 300px)', display: 'flex', flexDirection: 'column', borderRadius: '12px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-                <h3 style={{ margin: 0, fontSize: '0.95rem' }}>
-                  <i className="fa-solid fa-layer-group" style={{ color: 'var(--primary)', marginRight: '0.4rem' }}></i>
-                  Fuentes Locales del Chat
+          <div className="flex flex-col gap-4 w-full">
+            <div className="p-4 sm:p-5 rounded-xl bg-[#17171c]/75 border border-white/10 backdrop-blur-md shadow-xl flex flex-col h-[560px]">
+              <div className="flex items-center justify-between mb-3 pb-2 border-b border-white/10">
+                <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                  <i className="fa-solid fa-layer-group text-amber-500"></i>
+                  Fuentes Locales
                 </h3>
                 <button 
                   type="button" 
-                  className="btn btn-sm btn-secondary"
+                  className="px-2 py-1 text-xs text-zinc-400 hover:text-white bg-white/5 rounded cursor-pointer transition-colors"
                   onClick={() => setShowSelectorCard(false)}
                   title="Ocultar selector"
-                  style={{ fontSize: '0.75rem', padding: '0.2rem 0.4rem' }}
                 >
                   <i className="fa-solid fa-chevron-left"></i> Ocultar
                 </button>
               </div>
 
-              <div style={{ flexGrow: 1, overflowY: 'auto', paddingRight: '0.25rem' }}>
+              <div className="flex-1 overflow-y-auto pr-1">
                 <FolderTree
                   projects={projects}
                   folders={folders}
@@ -676,79 +623,78 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
         )}
 
         {/* Right Side: Chat Container */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', width: '100%' }}>
-          
-          <div className="card glass-card chat-card" id="chat-container-card" style={{ display: 'flex', flexDirection: 'column', minHeight: '480px', height: 'calc(100vh - 300px)', borderRadius: '12px' }}>
+        <div className="flex flex-col gap-3 w-full min-w-0">
+          <div className="rounded-xl bg-[#17171c]/75 border border-white/10 backdrop-blur-md shadow-xl flex flex-col h-[560px] overflow-hidden" id="chat-container-card">
             
             {/* Active Session & Search Mode Badge Bar */}
-            <div style={{ padding: '0.55rem 0.875rem', borderBottom: '1px solid var(--border-glass)', background: 'rgba(245, 158, 11, 0.05)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.8125rem', flexWrap: 'wrap', gap: '0.5rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <div className="px-4 py-2.5 bg-amber-500/5 border-b border-white/10 flex items-center justify-between text-xs flex-wrap gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 {(!showSelectorCard || searchMode === 'web') && (
                   <button
                     type="button"
-                    className="btn btn-sm btn-secondary"
+                    className="px-2 py-1 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded flex items-center gap-1 cursor-pointer hover:bg-amber-500/20"
                     onClick={() => { setShowSelectorCard(true); if (searchMode === 'web') setSearchMode('local'); }}
-                    style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem', color: 'var(--primary)', border: '1px solid var(--border-amber)' }}
                     title="Mostrar selector de fuentes"
                   >
                     <i className="fa-solid fa-folder-open"></i> Mostrar Fuentes ({selectedSourceIds.size})
                   </button>
                 )}
-                <span style={{ color: 'var(--primary)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+                <span className="text-amber-400 font-semibold flex items-center gap-1.5">
                   {searchMode === 'local' && (
-                    <><i className="fa-solid fa-folder-open" style={{ color: 'var(--primary)' }}></i> RAG Local ({selectedSourceIds.size > 0 ? `${selectedSourceIds.size} fuentes` : 'Sin fuentes - Conocimiento Crudo'})</>
+                    <><i className="fa-solid fa-folder-open"></i> RAG Local ({selectedSourceIds.size > 0 ? `${selectedSourceIds.size} fuentes` : 'Sin fuentes - Conocimiento Crudo'})</>
                   )}
-                  {searchMode === 'web' && <><i className="fa-solid fa-globe" style={{ color: 'var(--primary)' }}></i> RAG Web Agentico</>}
-                  {searchMode === 'hybrid' && <><i className="fa-solid fa-dna" style={{ color: 'var(--accent)' }}></i> RAG Híbrido (Locales + Web)</>}
+                  {searchMode === 'web' && <><i className="fa-solid fa-globe text-sky-400"></i> RAG Web Agentico</>}
+                  {searchMode === 'hybrid' && <><i className="fa-solid fa-dna text-emerald-400"></i> RAG Híbrido (Locales + Web)</>}
                 </span>
                 {activeSessionObj && (
-                  <span style={{ background: 'rgba(245, 158, 11, 0.15)', color: 'var(--primary)', padding: '0.15rem 0.5rem', borderRadius: '0.25rem', fontSize: '0.75rem', fontWeight: 600 }}>
+                  <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-400 text-[11px] font-semibold flex items-center gap-1">
                     <i className="fa-solid fa-message"></i> {activeSessionObj.title}
                   </span>
                 )}
               </div>
 
-              <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  className="btn btn-sm btn-secondary"
+                  className="px-2.5 py-1 text-xs text-white bg-white/10 hover:bg-white/15 rounded border border-white/10 flex items-center gap-1 cursor-pointer"
                   onClick={handleNewConversation}
-                  style={{ fontSize: '0.72rem', padding: '0.15rem 0.4rem' }}
                   title="Nueva conversación limpia"
                 >
                   <i className="fa-solid fa-plus"></i> Nueva
                 </button>
-                <span style={{ color: '#94a3b8', fontSize: '0.75rem' }}>
-                  Gemma 4 12B
-                </span>
+                <span className="text-zinc-400 text-xs">Gemma 4 12B</span>
               </div>
             </div>
 
             {/* Chat bubbles area */}
-            <div className="chat-bubbles-view" id="chat-bubbles-view" style={{ flexGrow: 1, overflowY: 'auto', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4" id="chat-bubbles-view">
               {messages.length === 0 && !isTyping && (
-                <div style={{ textAlign: 'center', margin: 'auto', color: 'hsl(var(--text-muted))', fontSize: '0.875rem' }}>
-                  <i className="fa-solid fa-comments" style={{ fontSize: '2.5rem', marginBottom: '1rem', opacity: '0.4', display: 'block' }}></i>
+                <div className="text-center my-auto text-zinc-400 text-sm p-6">
+                  <i className="fa-solid fa-comments text-4xl mb-3 opacity-40 block text-amber-500"></i>
                   Haz cualquier pregunta. {searchMode === 'local' ? (selectedSourceIds.size > 0 ? `Consultando sobre ${selectedSourceIds.size} fuentes locales.` : 'Respondiendo con conocimiento crudo preentrenado (sin fuentes).') : 'El sistema buscará en la web en tiempo real.'}
                 </div>
               )}
 
               {messages.map((msg, index) => (
-                <div key={index} className={`chat-bubble ${msg.role === 'user' ? 'user' : 'assistant'}`}>
+                <div key={index} className={`flex gap-3 max-w-[90%] sm:max-w-[85%] ${msg.role === 'user' ? 'self-end flex-row-reverse' : 'self-start'}`}>
                   {msg.role === 'assistant' && (
-                    <div className="assistant-avatar">
+                    <div className="w-8 h-8 rounded-full bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0 text-xs">
                       <i className="fa-solid fa-brain"></i>
                     </div>
                   )}
                   
-                  <div className="bubble-content" style={{ width: '100%' }}>
+                  <div className={`p-4 rounded-2xl text-sm leading-relaxed ${
+                    msg.role === 'user'
+                      ? 'bg-amber-500/20 text-white border border-amber-500/30 rounded-tr-none'
+                      : 'bg-white/[0.04] text-zinc-200 border border-white/10 rounded-tl-none w-full'
+                  }`}>
                     {/* Glassbox Live Research Stream Card */}
                     {msg.role === 'assistant' && msg.search_logs && msg.search_logs.length > 0 && (
-                      <div style={{ marginBottom: '0.875rem', background: 'rgba(15, 23, 42, 0.6)', border: '1px solid rgba(56, 189, 248, 0.3)', borderRadius: '0.5rem', padding: '0.625rem 0.875rem', fontSize: '0.75rem' }}>
-                        <div style={{ fontWeight: 600, color: '#38bdf8', marginBottom: '0.35rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                      <div className="mb-3 p-3 rounded-lg bg-slate-950/80 border border-sky-500/30 text-xs">
+                        <div className="font-semibold text-sky-400 mb-1 flex items-center gap-1.5">
                           <i className="fa-solid fa-terminal"></i> Rastreabilidad de Investigación Web en Vivo (Glassbox)
                         </div>
-                        <div style={{ fontFamily: 'monospace', color: '#cbd5e1', lineHeight: 1.5 }}>
+                        <div className="font-mono text-zinc-300 space-y-0.5 leading-relaxed">
                           {msg.search_logs.map((log, lIdx) => (
                             <div key={lIdx}>{log}</div>
                           ))}
@@ -757,40 +703,39 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
                     )}
 
                     <div 
-                      className="bubble-text"
+                      className="prose prose-invert max-w-none space-y-2 text-zinc-200"
                       dangerouslySetInnerHTML={renderMarkdown(msg.content)}
                     ></div>
                     
-                    {/* Real Web Source Badges with Promote Button */}
+                    {/* Real Web Source Badges */}
                     {msg.role === 'assistant' && msg.web_sources && msg.web_sources.length > 0 && (
-                      <div style={{ marginTop: '0.875rem', borderTop: '1px solid var(--border-glass)', paddingTop: '0.625rem' }}>
-                        <span style={{ fontSize: '0.75rem', fontWeight: 600, color: '#38bdf8', display: 'block', marginBottom: '0.4rem' }}>
+                      <div className="mt-3 pt-2 border-t border-white/10 flex flex-col gap-1.5">
+                        <span className="text-xs font-semibold text-sky-400 flex items-center gap-1">
                           <i className="fa-solid fa-globe"></i> Fuentes Web Verificadas ({msg.web_sources.length}):
                         </span>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                        <div className="flex flex-col gap-1">
                           {msg.web_sources.map((wSrc, wIdx) => (
-                            <div key={wIdx} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(255,255,255,0.03)', padding: '0.35rem 0.6rem', borderRadius: '0.375rem', border: '1px solid var(--border-glass)', fontSize: '0.75rem' }}>
+                            <div key={wIdx} className="flex items-center justify-between p-2 rounded-lg bg-white/[0.03] border border-white/10 text-xs">
                               <a
                                 href={wSrc.url}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                style={{ color: '#93c5fd', textDecoration: 'none', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '75%' }}
+                                className="text-sky-300 hover:underline truncate max-w-[75%]"
                               >
-                                <i className="fa-solid fa-arrow-up-right-from-square" style={{ marginRight: '0.35rem', fontSize: '0.6875rem' }}></i>
+                                <i className="fa-solid fa-arrow-up-right-from-square mr-1 text-[10px]"></i>
                                 [{wSrc.domain}] {wSrc.title}
                               </a>
                               <button
                                 type="button"
-                                className="btn btn-sm btn-secondary"
+                                className="px-2 py-0.5 text-[11px] font-medium text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 rounded border border-emerald-500/20 flex items-center gap-1 cursor-pointer"
                                 onClick={() => {
                                   setPromoteTargetUrl(wSrc.url);
                                   setPromoteProjectId('');
                                   setPromoteFolderId('');
                                 }}
-                                style={{ fontSize: '0.6875rem', padding: '0.15rem 0.4rem' }}
                                 title="Guardar fuente web completa en Proyecto"
                               >
-                                <i className="fa-solid fa-floppy-disk" style={{ color: '#10b981' }}></i> Guardar
+                                <i className="fa-solid fa-floppy-disk"></i> Guardar
                               </button>
                             </div>
                           ))}
@@ -800,23 +745,21 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
 
                     {/* Local Sources Accordion */}
                     {msg.role === 'assistant' && msg.sources && msg.sources.length > 0 && (
-                      <div className="sources-container" style={{ marginTop: '0.75rem' }}>
+                      <div className="mt-3 pt-2 border-t border-white/10">
                         <details 
                           open={!!openedSourcesIdx[index]} 
                           onToggle={() => toggleAccordion(index)}
-                          className="sources-details"
+                          className="text-xs"
                         >
-                          <summary style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--accent-light)', cursor: 'pointer', outline: 'none' }}>
+                          <summary className="font-semibold text-amber-400 cursor-pointer outline-none flex items-center gap-1.5">
                             <i className={`fa-solid ${openedSourcesIdx[index] ? 'fa-folder-open' : 'fa-folder'}`}></i> Contexto RAG Local ({msg.sources.length} fragmentos extraídos)
                           </summary>
-                          <ul style={{ listStyleType: 'none', margin: '0.5rem 0 0 0', padding: 0, fontSize: '0.75rem', color: 'hsl(var(--text-muted))' }}>
+                          <ul className="mt-2 space-y-1.5 list-none pl-0 text-zinc-300">
                             {msg.sources.map((src, srcIdx) => {
                               const snippetText = typeof src === 'string' ? src : src.text;
                               return (
-                                <li key={srcIdx} style={{ padding: '0.35rem 0', borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-                                  <span style={{ fontStyle: 'italic', display: 'block', paddingLeft: '0.5rem', marginTop: '0.125rem', whiteSpace: 'pre-wrap', color: '#cbd5e1' }}>
-                                    {snippetText}
-                                  </span>
+                                <li key={srcIdx} className="p-2 rounded bg-black/30 border border-white/5 text-[11px] leading-relaxed italic">
+                                  {snippetText}
                                 </li>
                               );
                             })}
@@ -829,12 +772,12 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
               ))}
 
               {isTyping && (
-                <div className="chat-bubble assistant typing-bubble">
-                  <div className="assistant-avatar">
+                <div className="flex gap-3 max-w-[85%] self-start">
+                  <div className="w-8 h-8 rounded-full bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0 text-xs">
                     <i className="fa-solid fa-brain"></i>
                   </div>
-                  <div className="bubble-content">
-                    <i className="fa-solid fa-ellipsis fa-fade"></i> Gemma 4 investigando y sintetizando respuesta...
+                  <div className="p-3.5 rounded-2xl bg-white/[0.04] text-zinc-300 border border-white/10 text-xs flex items-center gap-2">
+                    <i className="fa-solid fa-spinner fa-spin text-amber-400"></i> Gemma 4 investigando y sintetizando respuesta...
                   </div>
                 </div>
               )}
@@ -843,7 +786,7 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
             </div>
 
             {/* Form input */}
-            <form id="chat-form" className="chat-input-wrapper" onSubmit={handleSendMessage} style={{ display: 'flex', borderTop: '1px solid var(--border-glass)', padding: '0.75rem' }}>
+            <form id="chat-form" className="flex items-center gap-2 border-t border-white/10 p-3 bg-black/30" onSubmit={handleSendMessage}>
               <input
                 type="text"
                 id="chat-message-input"
@@ -852,9 +795,9 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
                 autoComplete="off"
                 value={inputVal}
                 onChange={(e) => setInputVal(e.target.value)}
-                style={{ flexGrow: 1, background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-glass)', borderRadius: '0.5rem', color: '#fff', padding: '0.625rem 0.875rem', fontSize: '0.875rem', outline: 'none' }}
+                className="flex-1 bg-white/[0.03] border border-white/10 rounded-lg text-white px-3.5 py-2.5 text-sm focus:outline-none focus:border-amber-500 transition-colors"
               />
-              <button type="submit" className="send-btn" id="send-chat-btn" style={{ marginLeft: '0.5rem', background: 'var(--accent-light)', border: 'none', borderRadius: '0.5rem', width: '2.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', cursor: 'pointer' }}>
+              <button type="submit" className="px-4 py-2.5 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold rounded-lg flex items-center justify-center transition-colors cursor-pointer" id="send-chat-btn">
                 <i className="fa-solid fa-paper-plane"></i>
               </button>
             </form>
@@ -862,38 +805,37 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
         </div>
       </div>
 
-      {/* ── Modal: Confirm Chat Without Sources (Portal) ── */}
+      {/* Modal: Confirm Chat Without Sources */}
       {showNoSourcesModal && createPortal(
-        <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1.5rem' }} onClick={handleRejectNoSources}>
-          <div className="card glass-card" style={{ width: '100%', maxWidth: '480px', padding: '1.75rem', border: '1px solid rgba(245, 158, 11, 0.4)', boxShadow: '0 1rem 3rem rgba(0,0,0,0.5)' }} onClick={e => e.stopPropagation()}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
-              <div style={{ width: '42px', height: '42px', borderRadius: '50%', backgroundColor: 'rgba(245, 158, 11, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <i className="fa-solid fa-triangle-exclamation" style={{ color: '#f59e0b', fontSize: '1.3rem' }}></i>
+        <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={handleRejectNoSources}>
+          <div className="p-6 rounded-2xl bg-[#17171c] border border-amber-500/40 shadow-2xl max-w-md w-full flex flex-col gap-4" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 text-lg shrink-0">
+                <i className="fa-solid fa-triangle-exclamation"></i>
               </div>
-              <h3 style={{ margin: 0, fontSize: '1.15rem', color: '#f8fafc' }}>
+              <h3 className="text-base font-semibold text-white">
                 ¿Continuar sin fuentes seleccionadas?
               </h3>
             </div>
 
-            <p style={{ margin: 0, fontSize: '0.875rem', color: '#cbd5e1', lineHeight: '1.5' }}>
-              Has elegido la opción <strong>Solo Fuentes Locales</strong>, pero no tienes ninguna fuente ni carpeta seleccionada en el panel izquierdo.
+            <p className="text-xs text-zinc-300 leading-relaxed">
+              Has elegido la opción <strong>Solo Fuentes Locales</strong>, pero no tienes ninguna fuente seleccionada.
               <br /><br />
-              El modelo responderá utilizando únicamente su <strong>conocimiento general preentrenado (Gemma 4 12B)</strong>, sin consultar ningún documento ni buscar en la web.
+              El modelo responderá utilizando únicamente su <strong>conocimiento general preentrenado (Gemma 4 12B)</strong>, sin consultar ningún documento.
             </p>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1.25rem' }}>
+            <div className="flex items-center justify-end gap-3 pt-2">
               <button
                 type="button"
-                className="btn btn-secondary"
+                className="px-3.5 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-xs text-white font-medium cursor-pointer transition-colors"
                 onClick={handleRejectNoSources}
               >
                 Seleccionar Fuentes Primero
               </button>
               <button
                 type="button"
-                className="btn btn-primary"
+                className="px-3.5 py-2 rounded-lg bg-gradient-to-r from-amber-500 to-amber-600 text-zinc-950 font-semibold text-xs cursor-pointer shadow-md shadow-amber-500/20 transition-all"
                 onClick={handleAcceptNoSources}
-                style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)', border: 'none', color: '#fff' }}
               >
                 Continuar con Conocimiento Crudo
               </button>
@@ -903,45 +845,41 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
         document.body
       )}
 
-      {/* ── Modal: Export Chat Session Payload (Portal) ── */}
+      {/* Modal: Export Chat Session Payload */}
       {showExportModal && createPortal(
-        <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1.5rem' }} onClick={() => setShowExportModal(false)}>
-          <div className="card glass-card" style={{ width: '100%', maxWidth: '520px', padding: '1.75rem', border: '1px solid rgba(56,189,248,0.4)', boxShadow: '0 1rem 3rem rgba(0,0,0,0.5)' }} onClick={e => e.stopPropagation()}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-              <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#38bdf8', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowExportModal(false)}>
+          <div className="p-6 rounded-2xl bg-[#17171c] border border-sky-500/40 shadow-2xl max-w-md w-full flex flex-col gap-4" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between pb-2 border-b border-white/10">
+              <h3 className="text-base font-semibold text-sky-400 flex items-center gap-2">
                 <i className="fa-solid fa-file-export"></i> Exportar Conversación
               </h3>
-              <button className="btn btn-sm btn-secondary" onClick={() => setShowExportModal(false)} style={{ fontSize: '0.75rem' }}>
+              <button className="text-zinc-400 hover:text-white text-xs cursor-pointer" onClick={() => setShowExportModal(false)}>
                 <i className="fa-solid fa-xmark"></i>
               </button>
             </div>
 
-            <p style={{ fontSize: '0.875rem', color: '#cbd5e1', lineHeight: '1.5', marginBottom: '1.25rem' }}>
-              Puedes descargar el payload JSON completo de la conversación activa o copiarlo al portapapeles para transferirlo o respaldarlo.
+            <p className="text-xs text-zinc-300 leading-relaxed">
+              Puedes descargar el payload JSON completo de la conversación activa o copiarlo al portapapeles para respaldarlo.
             </p>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
+            <div className="flex flex-col gap-2.5 pt-2">
               <button
                 type="button"
-                className="btn btn-primary"
+                className="w-full py-2.5 px-4 bg-sky-500 hover:bg-sky-400 text-zinc-950 font-semibold text-xs rounded-xl flex items-center justify-center gap-2 transition-colors cursor-pointer"
                 onClick={handleDownloadExportJson}
-                style={{ padding: '0.75rem 1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', fontWeight: 600 }}
               >
                 <i className="fa-solid fa-download"></i> 1. Descargar Archivo JSON
               </button>
 
               <button
                 type="button"
-                className="btn btn-secondary"
+                className="w-full py-2.5 px-4 bg-white/10 hover:bg-white/15 text-white font-medium text-xs rounded-xl flex items-center justify-center gap-2 border border-white/10 transition-colors cursor-pointer"
                 onClick={handleCopyExportClipboard}
-                style={{ padding: '0.75rem 1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', fontWeight: 600 }}
               >
                 {copiedSuccess ? (
-                  <span style={{ color: '#10b981' }}><i className="fa-solid fa-check"></i> ¡Copiado al Portapapeles!</span>
+                  <span className="text-emerald-400 font-semibold flex items-center gap-1"><i className="fa-solid fa-check"></i> ¡Copiado al Portapapeles!</span>
                 ) : (
-                  <>
-                    <i className="fa-solid fa-copy"></i> 2. Copiar Payload al Portapapeles
-                  </>
+                  <><i className="fa-solid fa-copy"></i> 2. Copiar Payload al Portapapeles</>
                 )}
               </button>
             </div>
@@ -950,53 +888,48 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
         document.body
       )}
 
-      {/* ── Modal: Import Chat Session Payload (Portal) ── */}
+      {/* Modal: Import Chat Session Payload */}
       {showImportModal && createPortal(
-        <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1.5rem' }} onClick={() => setShowImportModal(false)}>
-          <div className="card glass-card" style={{ width: '100%', maxWidth: '540px', padding: '1.75rem', border: '1px solid rgba(16,185,129,0.4)', boxShadow: '0 1rem 3rem rgba(0,0,0,0.5)' }} onClick={e => e.stopPropagation()}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-              <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#10b981', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowImportModal(false)}>
+          <div className="p-6 rounded-2xl bg-[#17171c] border border-emerald-500/40 shadow-2xl max-w-lg w-full flex flex-col gap-4" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between pb-2 border-b border-white/10">
+              <h3 className="text-base font-semibold text-emerald-400 flex items-center gap-2">
                 <i className="fa-solid fa-file-import"></i> Importar Conversación desde JSON
               </h3>
-              <button className="btn btn-sm btn-secondary" onClick={() => setShowImportModal(false)} style={{ fontSize: '0.75rem' }}>
+              <button className="text-zinc-400 hover:text-white text-xs cursor-pointer" onClick={() => setShowImportModal(false)}>
                 <i className="fa-solid fa-xmark"></i>
               </button>
             </div>
 
-            <p style={{ fontSize: '0.85rem', color: '#cbd5e1', lineHeight: '1.4', marginBottom: '1rem' }}>
-              Carga un archivo `.json` exportado previamente o pega el texto del payload JSON. Se registrará como una conversación nativa en tu historial.
+            <p className="text-xs text-zinc-300 leading-relaxed">
+              Carga un archivo `.json` exportado previamente o pega el texto del payload JSON.
             </p>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <div>
-                <label className="form-label" style={{ display: 'block', marginBottom: '0.35rem', fontSize: '0.78125rem' }}>
-                  Seleccionar Archivo JSON:
-                </label>
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-zinc-300">Seleccionar Archivo JSON:</label>
                 <input
                   type="file"
                   accept=".json,application/json"
                   onChange={handleImportJsonFile}
-                  style={{ width: '100%', fontSize: '0.8125rem', color: '#cbd5e1' }}
+                  className="text-xs text-zinc-400"
                 />
               </div>
 
-              <div>
-                <label className="form-label" style={{ display: 'block', marginBottom: '0.35rem', fontSize: '0.78125rem' }}>
-                  O Pegar Payload JSON Directamente:
-                </label>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-zinc-300">O Pegar Payload JSON Directamente:</label>
                 <textarea
-                  className="form-control"
-                  rows={6}
+                  rows={5}
                   placeholder='Pega aquí el JSON exportado...'
                   value={importJsonText}
                   onChange={e => setImportJsonText(e.target.value)}
-                  style={{ width: '100%', fontFamily: 'monospace', fontSize: '0.75rem', padding: '0.5rem', background: 'rgba(0,0,0,0.4)', color: '#a7f3d0' }}
+                  className="w-full font-mono text-xs p-2.5 bg-black/40 border border-white/10 rounded-lg text-emerald-300 focus:outline-none focus:border-emerald-500"
                 ></textarea>
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.5rem' }}>
-                <button type="button" className="btn btn-secondary" disabled={isImporting} onClick={() => setShowImportModal(false)}>Cancelar</button>
-                <button type="button" className="btn btn-primary" disabled={isImporting} onClick={handleExecuteImport} style={{ background: 'linear-gradient(135deg, #10b981, #059669)', border: 'none', color: '#fff' }}>
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button type="button" className="px-3.5 py-2 rounded-lg bg-white/10 text-white text-xs font-medium cursor-pointer" disabled={isImporting} onClick={() => setShowImportModal(false)}>Cancelar</button>
+                <button type="button" className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold cursor-pointer transition-colors" disabled={isImporting} onClick={handleExecuteImport}>
                   {isImporting ? <><i className="fa-solid fa-spinner fa-spin"></i> Importando...</> : <><i className="fa-solid fa-check"></i> Importar Conversación</>}
                 </button>
               </div>
@@ -1006,28 +939,27 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
         document.body
       )}
 
-      {/* ── Modal: Promote Web Source to Permanent Project/Folder (Portal) ── */}
+      {/* Modal: Promote Web Source */}
       {promoteTargetUrl && createPortal(
-        <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1.5rem' }} onClick={() => setPromoteTargetUrl(null)}>
-          <div className="card glass-card" style={{ width: '100%', maxWidth: '460px', padding: '1.75rem', border: '1px solid rgba(16,185,129,0.4)', boxShadow: '0 1rem 3rem rgba(0,0,0,0.5)' }} onClick={e => e.stopPropagation()}>
-            <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <i className="fa-solid fa-floppy-disk" style={{ color: '#10b981' }}></i> Guardar Fuente Web Completa
+        <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setPromoteTargetUrl(null)}>
+          <div className="p-6 rounded-2xl bg-[#17171c] border border-emerald-500/40 shadow-2xl max-w-md w-full flex flex-col gap-4" onClick={e => e.stopPropagation()}>
+            <h3 className="text-base font-semibold text-white flex items-center gap-2">
+              <i className="fa-solid fa-floppy-disk text-emerald-400"></i> Guardar Fuente Web Completa
             </h3>
-            <p style={{ fontSize: '0.85rem', color: '#cbd5e1', marginTop: '0.35rem', wordBreak: 'break-all' }}>
-              Se extraerá la página completa con Docling para guardarla permanentemente en:
-              <br /><strong style={{ color: '#38bdf8' }}>{promoteTargetUrl}</strong>
+            <p className="text-xs text-zinc-300 break-all leading-relaxed">
+              Se extraerá la página completa para guardarla en:
+              <br /><strong className="text-sky-400">{promoteTargetUrl}</strong>
             </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1.25rem' }}>
-              <div>
-                <label className="form-label" style={{ display: 'block', marginBottom: '0.35rem', fontSize: '0.8125rem' }}>Proyecto Destino</label>
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-zinc-300">Proyecto Destino</label>
                 <select
-                  className="form-control"
+                  className="w-full bg-[#1e293b] border border-white/10 rounded-lg text-white p-2.5 text-xs"
                   value={promoteProjectId}
                   onChange={e => {
                     setPromoteProjectId(e.target.value ? Number(e.target.value) : '');
                     setPromoteFolderId('');
                   }}
-                  style={{ width: '100%', padding: '0.625rem 0.75rem', background: 'rgba(20,24,38,0.95)', border: '1px solid var(--border-glass)', borderRadius: '0.375rem', color: '#fff' }}
                 >
                   <option value="">-- Sin Proyecto (Fuentes Generales) --</option>
                   {projects.map(p => (
@@ -1037,13 +969,12 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
               </div>
 
               {promoteProjectId !== '' && (
-                <div>
-                  <label className="form-label" style={{ display: 'block', marginBottom: '0.35rem', fontSize: '0.8125rem' }}>Carpeta Destino (Opcional)</label>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-zinc-300">Carpeta Destino (Opcional)</label>
                   <select
-                    className="form-control"
+                    className="w-full bg-[#1e293b] border border-white/10 rounded-lg text-white p-2.5 text-xs"
                     value={promoteFolderId}
                     onChange={e => setPromoteFolderId(e.target.value ? Number(e.target.value) : '')}
-                    style={{ width: '100%', padding: '0.625rem 0.75rem', background: 'rgba(20,24,38,0.95)', border: '1px solid var(--border-glass)', borderRadius: '0.375rem', color: '#fff' }}
                   >
                     <option value="">-- Raíz del Proyecto --</option>
                     {folders
@@ -1055,9 +986,9 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
                 </div>
               )}
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.5rem' }}>
-                <button type="button" className="btn btn-secondary" disabled={isPromoting} onClick={() => setPromoteTargetUrl(null)}>Cancelar</button>
-                <button type="button" className="btn btn-primary" disabled={isPromoting} onClick={handlePromoteWebSource}>
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button type="button" className="px-3.5 py-2 rounded-lg bg-white/10 text-white text-xs font-medium cursor-pointer" disabled={isPromoting} onClick={() => setPromoteTargetUrl(null)}>Cancelar</button>
+                <button type="button" className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold cursor-pointer transition-colors" disabled={isPromoting} onClick={handlePromoteWebSource}>
                   {isPromoting ? <><i className="fa-solid fa-spinner fa-spin"></i> Guardando...</> : <><i className="fa-solid fa-check"></i> Guardar en Proyecto</>}
                 </button>
               </div>
@@ -1067,27 +998,26 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
         document.body
       )}
 
-      {/* ── Modal: Conversations History Drawer (Portal) ── */}
+      {/* Modal: Conversations History Drawer */}
       {showSessionsPanel && createPortal(
-        <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1.5rem' }} onClick={() => setShowSessionsPanel(false)}>
-          <div className="card glass-card" style={{ width: '100%', maxWidth: '520px', maxHeight: '550px', padding: '1.75rem', border: '1px solid var(--border-amber)', boxShadow: '0 1rem 3rem rgba(0,0,0,0.5)', display: 'flex', flexDirection: 'column' }} onClick={e => e.stopPropagation()}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.75rem' }}>
-              <h3 style={{ margin: 0, fontSize: '1rem', color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowSessionsPanel(false)}>
+          <div className="p-6 rounded-2xl bg-[#17171c] border border-amber-500/40 shadow-2xl max-w-lg w-full max-h-[550px] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3 pb-2 border-b border-white/10">
+              <h3 className="text-sm font-semibold text-amber-400 flex items-center gap-2">
                 <i className="fa-solid fa-clock-rotate-left"></i> Historial de Conversaciones Guardadas
               </h3>
               <button 
                 type="button" 
-                className="btn btn-sm btn-secondary" 
+                className="text-xs text-zinc-400 hover:text-white px-2 py-1 bg-white/5 rounded cursor-pointer" 
                 onClick={() => setShowSessionsPanel(false)}
-                style={{ fontSize: '0.75rem', padding: '0.2rem 0.5rem' }}
               >
                 <i className="fa-solid fa-xmark"></i> Cerrar
               </button>
             </div>
 
-            <div style={{ flexGrow: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem', paddingRight: '0.25rem' }}>
+            <div className="flex-1 overflow-y-auto space-y-2 pr-1">
               {sessions.length === 0 ? (
-                <div style={{ fontSize: '0.85rem', color: 'hsl(var(--text-muted))', textAlign: 'center', padding: '2rem' }}>
+                <div className="text-xs text-zinc-500 text-center py-8">
                   No hay conversaciones guardadas.
                 </div>
               ) : (
@@ -1095,23 +1025,17 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
                   <div
                     key={s.id}
                     onClick={() => handleSelectSession(s)}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '0.65rem 0.875rem',
-                      borderRadius: '0.5rem',
-                      background: activeSessionId === s.id ? 'rgba(245, 158, 11, 0.12)' : 'rgba(255, 255, 255, 0.03)',
-                      border: activeSessionId === s.id ? '1px solid var(--border-amber)' : '1px solid var(--border-glass)',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s ease'
-                    }}
+                    className={`flex items-center justify-between p-3 rounded-lg border transition-colors cursor-pointer ${
+                      activeSessionId === s.id
+                        ? 'bg-amber-500/15 border-amber-500/40 text-amber-400'
+                        : 'bg-white/[0.02] border-white/10 hover:bg-white/[0.04] text-white'
+                    }`}
                   >
-                    <div style={{ overflow: 'hidden', paddingRight: '0.5rem' }}>
-                      <div style={{ fontWeight: 600, fontSize: '0.875rem', color: activeSessionId === s.id ? 'var(--primary)' : '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <div className="min-w-0 flex-1 mr-3">
+                      <div className="text-xs font-semibold truncate">
                         {s.title}
                       </div>
-                      <div style={{ fontSize: '0.75rem', color: 'hsl(var(--text-muted))', marginTop: '0.15rem' }}>
+                      <div className="text-[11px] text-zinc-400 mt-0.5">
                         {formatDate(s.created_at)} · {s.message_count || 0} mensajes
                       </div>
                     </div>
@@ -1120,7 +1044,7 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
                       type="button"
                       title="Borrar conversación"
                       onClick={(e) => handleDeleteSession(s.id, e)}
-                      style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)', color: '#ef4444', cursor: 'pointer', padding: '0.3rem 0.6rem', borderRadius: '0.375rem', fontSize: '0.75rem', flexShrink: 0 }}
+                      className="p-1.5 rounded text-red-400 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-xs shrink-0 cursor-pointer transition-colors"
                     >
                       <i className="fa-solid fa-trash"></i>
                     </button>

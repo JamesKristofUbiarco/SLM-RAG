@@ -110,7 +110,6 @@ export default function SummaryTab({ transcriptionList, activeId, setActiveId, a
 
   const preprocessMarkdown = (text: string): string => {
     if (!text) return '';
-    // Automatically convert lines starting with timestamps (with or without brackets/bullets) into bullet list items
     return text.replace(/^(\s*)(?:-\s*)?(?:\[)?(\d{1,2}:\d{2}(?::\d{2})?)(?:\])?\s+(.+)$/gm, '$1- [$2] $3');
   };
 
@@ -142,51 +141,51 @@ export default function SummaryTab({ transcriptionList, activeId, setActiveId, a
   };
 
   return (
-    <section id="summary-tab" className={`tab-panel ${active ? 'active' : ''}`}>
-      <div className="panel-header">
-        <h2>Resúmenes Inteligentes</h2>
-        <p>Genera resúmenes estructurados (Modo Reunión o Video Ensayo / Conferencia con marcas de tiempo) usando Gemma 4 local.</p>
+    <section id="summary-tab" className={`flex-col gap-6 w-full ${active ? 'flex' : 'hidden'}`}>
+      <div className="mb-1">
+        <h2 className="text-2xl font-semibold text-white tracking-tight mb-1">Resúmenes Inteligentes</h2>
+        <p className="text-sm text-zinc-400">Genera resúmenes estructurados (Modo Reunión o Video Ensayo / Conferencia con marcas de tiempo) usando Gemma 4 local.</p>
       </div>
 
-      <div className="card glass-card" style={{ marginBottom: '1.5rem' }}>
-        <div className="form-group">
-          <label htmlFor="history-summary-select"><i className="fa-solid fa-history"></i> Seleccionar Grabación:</label>
-          <select
-            id="history-summary-select"
-            className="form-control"
-            value={selectedId}
-            onChange={(e) => {
-              const val = e.target.value ? parseInt(e.target.value) : '';
-              setSelectedId(val);
-              if (setActiveId && typeof val === 'number') setActiveId(val);
-            }}
-          >
-            <option value="">-- Elige un archivo del historial --</option>
-            {transcriptionList.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.filename} ({item.created_at?.substring(0, 10)})
-              </option>
-            ))}
-          </select>
-        </div>
+      <div className="p-5 sm:p-6 rounded-xl bg-[#17171c]/75 border border-white/10 backdrop-blur-md shadow-xl flex flex-col gap-3 w-full mb-2">
+        <label htmlFor="history-summary-select" className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
+          <i className="fa-solid fa-history text-amber-500"></i> Seleccionar Grabación:
+        </label>
+        <select
+          id="history-summary-select"
+          className="w-full bg-[#1e293b] border border-white/10 rounded-lg text-white px-3.5 py-2.5 text-sm focus:outline-none focus:border-amber-500 transition-colors"
+          value={selectedId}
+          onChange={(e) => {
+            const val = e.target.value ? parseInt(e.target.value) : '';
+            setSelectedId(val);
+            if (setActiveId && typeof val === 'number') setActiveId(val);
+          }}
+        >
+          <option value="">-- Elige un archivo del historial --</option>
+          {transcriptionList.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.filename} ({item.created_at?.substring(0, 10)})
+            </option>
+          ))}
+        </select>
       </div>
 
       {isLoading ? (
-        <div className="card glass-card" style={{ textAlign: 'center', padding: '3rem' }}>
-          <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: '2rem', marginBottom: '1rem', color: 'hsl(var(--primary))' }}></i>
-          <p>Cargando información del resumen...</p>
+        <div className="p-12 text-center rounded-xl bg-[#17171c]/75 border border-white/10">
+          <i className="fa-solid fa-spinner fa-spin text-3xl text-amber-500 mb-3"></i>
+          <p className="text-sm text-zinc-400">Cargando información del resumen...</p>
         </div>
       ) : selectedId ? (
-        <div className="card glass-card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.75rem', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
-            <h3 style={{ margin: 0, fontSize: '1.125rem' }}>
+        <div className="p-5 sm:p-6 rounded-xl bg-[#17171c]/75 border border-white/10 backdrop-blur-md shadow-xl flex flex-col gap-4 w-full">
+          <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-white/10">
+            <h3 className="text-lg font-semibold text-white break-all">
               {summaryData?.filename || 'Archivo de Audio'}
             </h3>
 
-            {/* Controls Bar: Mode Selector + Action Button */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+            {/* Controls Bar */}
+            <div className="flex items-center gap-2 flex-wrap">
               <select
-                className="mode-select-dropdown"
+                className="bg-[#1e293b] border border-white/10 rounded-lg text-white px-3 py-2 text-xs font-medium focus:outline-none focus:border-amber-500 transition-colors"
                 value={summaryMode}
                 onChange={(e) => setSummaryMode(e.target.value as 'meeting' | 'essay')}
                 disabled={isGenerating}
@@ -199,41 +198,43 @@ export default function SummaryTab({ transcriptionList, activeId, setActiveId, a
               {summaryData?.summary && !isGenerating && (
                 <button
                   type="button"
-                  className="btn btn-secondary"
-                  style={{ fontSize: '0.8125rem', padding: '0.5rem 1rem' }}
+                  className="px-3.5 py-2 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10 text-white text-xs font-medium flex items-center gap-1.5 cursor-pointer transition-colors"
                   onClick={() => handleGenerateSummary(true)}
                 >
-                  <i className="fa-solid fa-arrows-rotate"></i> Regenerar Resumen
+                  <i className="fa-solid fa-arrows-rotate text-amber-400"></i> Regenerar Resumen
                 </button>
               )}
             </div>
           </div>
 
-          {/* Audio Player Card (for seeking timestamps) */}
+          {/* Audio Player Card */}
           {summaryData && (
-            <div style={{ marginBottom: '1.25rem', background: 'rgba(255,255,255,0.02)', padding: '0.75rem 1rem', borderRadius: '0.5rem', border: '1px solid var(--border-glass)', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.8rem', color: 'hsl(var(--text-muted))' }}>
-                <span><i className="fa-solid fa-headphones" style={{ color: 'var(--primary)', marginRight: '0.35rem' }}></i> Reproductor de Audio (Haz clic en cualquier marca de tiempo para saltar aquí)</span>
+            <div className="p-3.5 rounded-lg bg-white/[0.02] border border-white/10 flex flex-col gap-2">
+              <div className="flex items-center justify-between text-xs text-zinc-400">
+                <span className="flex items-center gap-1.5">
+                  <i className="fa-solid fa-headphones text-amber-500"></i> 
+                  Reproductor de Audio (Haz clic en cualquier marca de tiempo para saltar aquí)
+                </span>
               </div>
               <audio
                 ref={audioRef}
                 controls
                 src={`/api/files/view/${selectedId}`}
-                style={{ width: '100%', height: '40px' }}
+                className="w-full h-10 rounded-lg outline-none"
               />
             </div>
           )}
 
           {isGenerating ? (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '1rem', padding: '3rem 1rem', textAlign: 'center' }}>
-              <div className="loading-pulse" style={{ width: '4rem', height: '4rem', borderRadius: '50%', background: 'rgba(245, 158, 11, 0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid var(--primary)' }}>
-                <i className="fa-solid fa-brain" style={{ fontSize: '2rem', color: 'var(--primary)' }}></i>
+            <div className="flex flex-col items-center justify-center gap-4 py-12 px-4 text-center">
+              <div className="w-16 h-16 rounded-full bg-amber-500/15 border-2 border-amber-500 flex items-center justify-center animate-pulse">
+                <i className="fa-solid fa-brain text-2xl text-amber-500"></i>
               </div>
               <div>
-                <h4 style={{ color: 'var(--primary)', marginBottom: '0.25rem' }}>
+                <h4 className="text-base font-semibold text-amber-400 mb-1">
                   Generando resumen en {summaryMode === 'essay' ? 'Modo Video Ensayo (Índice de Tiempos)' : 'Modo Reunión (Minuta)'}...
                 </h4>
-                <p style={{ fontSize: '0.8125rem', color: 'hsl(var(--text-muted))', maxWidth: '450px' }}>
+                <p className="text-xs text-zinc-400 max-w-md mx-auto">
                   {summaryMode === 'essay' 
                     ? 'El modelo Gemma 4 está analizando la transcripción para extraer los capítulos por marcas de tiempo y el resumen por sección.'
                     : 'El modelo Gemma 4 está analizando la transcripción para redactar el resumen ejecutivo, la participación de locutores y los compromisos.'}
@@ -242,26 +243,25 @@ export default function SummaryTab({ transcriptionList, activeId, setActiveId, a
             </div>
           ) : summaryData?.summary ? (
             <div 
-              className="summary-content markdown-body" 
+              className="prose prose-invert max-w-none text-sm text-zinc-300 leading-relaxed space-y-3" 
               dangerouslySetInnerHTML={renderMarkdown(summaryData.summary)}
               onClick={handleSummaryContainerClick}
-              style={{ fontSize: '0.875rem', lineHeight: '1.7', color: '#cbd5e1' }}
             ></div>
           ) : (
-            <div className="summary-trigger-container" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '1rem', padding: '2.5rem 1.25rem', textAlign: 'center', background: 'rgba(255,255,255,0.01)', border: '1px dashed var(--border-glass)', borderRadius: '0.5rem' }}>
-              <i className="fa-solid fa-file-invoice" style={{ fontSize: '3rem', color: 'hsl(var(--primary))', opacity: '0.8' }}></i>
+            <div className="flex flex-col items-center justify-center gap-4 py-10 px-5 text-center bg-white/[0.01] border border-dashed border-white/10 rounded-xl">
+              <i className="fa-solid fa-file-invoice text-4xl text-amber-500/80"></i>
               <div>
-                <h3 style={{ marginBottom: '0.5rem', fontSize: '1rem', color: 'hsl(var(--text))' }}>
+                <h3 className="text-base font-semibold text-white mb-1">
                   El resumen aún no se ha generado
                 </h3>
-                <p style={{ fontSize: '0.8125rem', color: 'hsl(var(--text-muted))', maxWidth: '450px', margin: '0 auto 1rem', lineHeight: '1.5' }}>
+                <p className="text-xs text-zinc-400 max-w-md mx-auto mb-4">
                   Elige el modo deseado (<strong>Reunión</strong> o <strong>Video Ensayo con marcas de tiempo</strong>) y haz clic en el botón para iniciar.
                 </p>
               </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <div className="flex items-center gap-3 flex-wrap justify-center">
                 <select
-                  className="mode-select-dropdown"
+                  className="bg-[#1e293b] border border-white/10 rounded-lg text-white px-3 py-2 text-xs font-medium focus:outline-none focus:border-amber-500 transition-colors"
                   value={summaryMode}
                   onChange={(e) => setSummaryMode(e.target.value as 'meeting' | 'essay')}
                 >
@@ -271,7 +271,7 @@ export default function SummaryTab({ transcriptionList, activeId, setActiveId, a
 
                 <button 
                   type="button" 
-                  className="submit-btn" 
+                  className="py-2.5 px-5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-zinc-950 font-semibold text-xs rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 transition-all cursor-pointer" 
                   onClick={() => handleGenerateSummary(false)}
                 >
                   <i className="fa-solid fa-wand-magic-sparkles"></i> Comenzar resumen LLM
@@ -281,9 +281,9 @@ export default function SummaryTab({ transcriptionList, activeId, setActiveId, a
           )}
         </div>
       ) : (
-        <div className="card glass-card empty-state" id="summary-empty-state">
-          <i className="fa-solid fa-file-invoice" style={{ fontSize: '3rem', margin: '1rem 0', opacity: 0.3 }}></i>
-          <p>Selecciona una transcripción del historial para ver su resumen ejecutivo o generar uno nuevo.</p>
+        <div className="p-12 text-center rounded-xl bg-[#17171c]/75 border border-white/10" id="summary-empty-state">
+          <i className="fa-solid fa-file-invoice text-4xl text-zinc-600 mb-3 block"></i>
+          <p className="text-xs text-zinc-400">Selecciona una transcripción del historial para ver su resumen ejecutivo o generar uno nuevo.</p>
         </div>
       )}
     </section>

@@ -85,53 +85,40 @@ export default function FolderTree({
     };
 
     return (
-      <div key={folder.id} className="tree-folder-node" style={{ marginLeft: '1.25rem', marginTop: '0.35rem' }}>
-        <div 
-          className="folder-node-header" 
-          style={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            justifyContent: 'space-between', 
-            padding: '0.35rem 0.6rem', 
-            background: 'rgba(255, 255, 255, 0.03)', 
-            borderRadius: '0.375rem',
-            border: '1px solid var(--border-glass)'
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexGrow: 1, cursor: 'pointer' }}>
-            <span onClick={() => toggleFolderCollapse(folder.id)} style={{ width: '1.25rem', color: '#94a3b8' }}>
+      <div key={folder.id} className="ml-4 mt-1">
+        <div className="flex items-center justify-between p-1.5 rounded-md bg-white/[0.03] border border-white/10 hover:bg-white/[0.05] transition-colors">
+          <div className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
+            <span onClick={() => toggleFolderCollapse(folder.id)} className="w-4 text-zinc-400 text-xs text-center">
               <i className={`fa-solid ${isCollapsed ? 'fa-chevron-right' : 'fa-chevron-down'}`}></i>
             </span>
 
-            <label className="checkbox-container" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', margin: 0 }}>
-              <input 
-                type="checkbox" 
-                checked={isFullySelected}
-                ref={el => { if (el) el.indeterminate = isPartiallySelected; }}
-                onChange={handleFolderCheckboxChange}
-              />
-              <span className="checkmark"></span>
-            </label>
+            <input 
+              type="checkbox" 
+              className="accent-amber-500 rounded cursor-pointer w-3.5 h-3.5"
+              checked={isFullySelected}
+              ref={el => { if (el) el.indeterminate = isPartiallySelected; }}
+              onChange={handleFolderCheckboxChange}
+            />
 
-            <span onClick={() => toggleFolderCollapse(folder.id)} style={{ color: '#f59e0b', fontSize: '0.9rem' }}>
+            <span onClick={() => toggleFolderCollapse(folder.id)} className="text-amber-500 text-xs">
               <i className={`fa-solid ${isCollapsed ? 'fa-folder' : 'fa-folder-open'}`}></i>
             </span>
-            <span onClick={() => toggleFolderCollapse(folder.id)} style={{ fontWeight: 600, fontSize: '0.85rem', color: '#e2e8f0' }}>
+            <span onClick={() => toggleFolderCollapse(folder.id)} className="font-semibold text-xs text-zinc-200 truncate">
               {folder.name}
             </span>
-            <span style={{ fontSize: '0.75rem', color: '#64748b', marginLeft: '0.25rem' }}>
+            <span className="text-[11px] text-zinc-500 shrink-0">
               ({allFolderSourceIds.length})
             </span>
           </div>
 
           {isManagementMode && (
-            <div className="folder-actions" style={{ display: 'flex', gap: '0.35rem' }}>
+            <div className="flex items-center gap-1">
               {onCreateFolder && (
                 <button
                   type="button"
                   title="Añadir Subcarpeta"
                   onClick={() => onCreateFolder(projectId, folder.id)}
-                  style={{ background: 'transparent', border: 'none', color: '#38bdf8', cursor: 'pointer', padding: '0.2rem 0.4rem', fontSize: '0.75rem' }}
+                  className="text-sky-400 hover:text-sky-300 px-1.5 py-0.5 text-[11px] cursor-pointer"
                 >
                   <i className="fa-solid fa-folder-plus"></i>
                 </button>
@@ -141,7 +128,7 @@ export default function FolderTree({
                   type="button"
                   title="Eliminar Carpeta"
                   onClick={() => onDeleteFolder(folder.id)}
-                  style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '0.2rem 0.4rem', fontSize: '0.75rem' }}
+                  className="text-red-400 hover:text-red-300 px-1.5 py-0.5 text-[11px] cursor-pointer"
                 >
                   <i className="fa-solid fa-trash"></i>
                 </button>
@@ -151,7 +138,7 @@ export default function FolderTree({
         </div>
 
         {!isCollapsed && (
-          <div className="folder-node-children" style={{ borderLeft: '1px dashed rgba(255,255,255,0.1)', marginLeft: '0.6rem', paddingLeft: '0.5rem' }}>
+          <div className="border-l border-dashed border-white/10 ml-2.5 pl-2 space-y-1 mt-1">
             {/* Render Subfolders */}
             {childFolders.map(sub => renderFolder(sub, projectId))}
 
@@ -169,43 +156,27 @@ export default function FolderTree({
     return (
       <div 
         key={source.id} 
-        className="tree-source-node"
-        style={{ 
-          display: 'flex', 
-          alignItems: 'center', 
-          justifyContent: 'space-between', 
-          padding: '0.4rem 0.6rem 0.4rem 1.5rem', 
-          borderRadius: '0.25rem',
-          background: isSelected ? 'rgba(245, 158, 11, 0.12)' : 'transparent',
-          borderLeft: isSelected ? '2px solid var(--primary)' : '2px solid transparent'
-        }}
+        className={`flex items-center justify-between p-1.5 pl-4 rounded transition-colors text-xs ${
+          isSelected ? 'bg-amber-500/15 border-l-2 border-amber-500' : 'hover:bg-white/[0.03] border-l-2 border-transparent'
+        }`}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', overflow: 'hidden', flexGrow: 1 }}>
-          <label className="checkbox-container" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', margin: 0 }}>
-            <input 
-              type="checkbox" 
-              checked={isSelected}
-              onChange={() => onToggleSource(source.id)}
-            />
-            <span className="checkmark"></span>
-          </label>
-          <i className="fa-solid fa-file-audio" style={{ color: 'var(--primary)', fontSize: '0.8rem', flexShrink: 0 }}></i>
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <input 
+            type="checkbox" 
+            className="accent-amber-500 rounded cursor-pointer w-3.5 h-3.5"
+            checked={isSelected}
+            onChange={() => onToggleSource(source.id)}
+          />
+          <i className="fa-solid fa-file-audio text-amber-500 text-xs shrink-0"></i>
           <span 
             title={source.filename}
-            style={{ 
-              fontSize: '0.8125rem', 
-              color: isSelected ? '#fff' : '#cbd5e1', 
-              overflow: 'hidden', 
-              textOverflow: 'ellipsis', 
-              whiteSpace: 'nowrap',
-              cursor: 'pointer' 
-            }}
+            className={`truncate cursor-pointer text-xs ${isSelected ? 'text-white font-medium' : 'text-zinc-300'}`}
             onClick={() => onToggleSource(source.id)}
           >
             {source.filename}
           </span>
-          <span style={{ fontSize: '0.6875rem', color: '#64748b', flexShrink: 0 }}>
-            ({source.word_count || 0} palabras)
+          <span className="text-[10px] text-zinc-500 shrink-0">
+            ({source.word_count || 0} pal.)
           </span>
         </div>
 
@@ -214,7 +185,7 @@ export default function FolderTree({
             type="button"
             title="Mover a carpeta/proyecto"
             onClick={() => onMoveSource(source)}
-            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-glass)', color: '#cbd5e1', cursor: 'pointer', padding: '0.2rem 0.5rem', borderRadius: '0.25rem', fontSize: '0.7rem' }}
+            className="px-2 py-0.5 rounded text-[11px] text-zinc-300 bg-white/5 hover:bg-white/10 border border-white/10 cursor-pointer ml-2"
           >
             <i className="fa-solid fa-arrow-right-to-city"></i> Mover
           </button>
@@ -227,32 +198,30 @@ export default function FolderTree({
   const unassignedSources = transcriptions.filter(t => !t.project_id);
 
   return (
-    <div className="folder-tree-container">
+    <div className="flex flex-col gap-3 w-full">
       {/* Global Toolbar for Selection */}
       {(onSelectAll || onDeselectAll) && (
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', paddingBottom: '0.5rem', borderBottom: '1px solid var(--border-glass)' }}>
-          <div style={{ fontSize: '0.8125rem', color: 'var(--primary)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+        <div className="flex items-center justify-between pb-2 border-b border-white/10 text-xs">
+          <div className="text-amber-400 font-semibold flex items-center gap-1.5">
             <i className="fa-solid fa-layer-group"></i> {selectedSourceIds.size} de {transcriptions.length} fuentes activas
           </div>
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <div className="flex items-center gap-2">
             {onSelectAll && (
               <button
                 type="button"
-                className="btn btn-sm btn-secondary"
+                className="px-2.5 py-1 rounded bg-white/10 hover:bg-white/15 text-white text-[11px] font-medium cursor-pointer transition-colors"
                 onClick={onSelectAll}
-                style={{ fontSize: '0.75rem', padding: '0.2rem 0.5rem' }}
               >
-                <i className="fa-solid fa-check-double"></i> Marcar Todo
+                <i className="fa-solid fa-check-double mr-1"></i> Marcar Todo
               </button>
             )}
             {onDeselectAll && (
               <button
                 type="button"
-                className="btn btn-sm btn-secondary"
+                className="px-2.5 py-1 rounded bg-white/10 hover:bg-white/15 text-white text-[11px] font-medium cursor-pointer transition-colors"
                 onClick={onDeselectAll}
-                style={{ fontSize: '0.75rem', padding: '0.2rem 0.5rem' }}
               >
-                <i className="fa-solid fa-xmark"></i> Desmarcar
+                <i className="fa-solid fa-xmark mr-1"></i> Desmarcar
               </button>
             )}
           </div>
@@ -277,65 +246,50 @@ export default function FolderTree({
         };
 
         return (
-          <div key={project.id} className="project-node" style={{ marginBottom: '1rem' }}>
-            <div 
-              className="project-header"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                padding: '0.5rem 0.75rem',
-                background: 'rgba(245, 158, 11, 0.08)',
-                borderRadius: '0.5rem',
-                border: '1px solid var(--border-amber)'
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexGrow: 1, cursor: 'pointer' }}>
-                <span onClick={() => toggleProjectCollapse(projectKey)} style={{ width: '1.25rem', color: 'var(--primary)' }}>
+          <div key={project.id} className="flex flex-col mb-1">
+            <div className="flex items-center justify-between p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-xs">
+              <div className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
+                <span onClick={() => toggleProjectCollapse(projectKey)} className="w-4 text-amber-500 text-center">
                   <i className={`fa-solid ${isCollapsed ? 'fa-chevron-right' : 'fa-chevron-down'}`}></i>
                 </span>
 
-                <label className="checkbox-container" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', margin: 0 }}>
-                  <input 
-                    type="checkbox" 
-                    checked={isFullySelected}
-                    ref={el => { if (el) el.indeterminate = isPartiallySelected; }}
-                    onChange={handleProjectCheckboxChange}
-                  />
-                  <span className="checkmark"></span>
-                </label>
+                <input 
+                  type="checkbox" 
+                  className="accent-amber-500 rounded cursor-pointer w-3.5 h-3.5"
+                  checked={isFullySelected}
+                  ref={el => { if (el) el.indeterminate = isPartiallySelected; }}
+                  onChange={handleProjectCheckboxChange}
+                />
 
-                <span onClick={() => toggleProjectCollapse(projectKey)} style={{ color: 'var(--primary)', fontSize: '1rem' }}>
+                <span onClick={() => toggleProjectCollapse(projectKey)} className="text-amber-500">
                   <i className="fa-solid fa-diagram-project"></i>
                 </span>
-                <span onClick={() => toggleProjectCollapse(projectKey)} style={{ fontWeight: 700, fontSize: '0.9rem', color: '#fff' }}>
+                <span onClick={() => toggleProjectCollapse(projectKey)} className="font-bold text-white truncate">
                   {project.name}
                 </span>
-                <span style={{ fontSize: '0.75rem', color: 'var(--success)', marginLeft: '0.25rem' }}>
+                <span className="text-[11px] text-emerald-400 font-medium shrink-0">
                   ({allProjectSourceIds.length} fuentes)
                 </span>
               </div>
 
               {isManagementMode && (
-                <div style={{ display: 'flex', gap: '0.35rem' }}>
+                <div className="flex items-center gap-1.5 shrink-0">
                   {onCreateFolder && (
                     <button
                       type="button"
-                      className="btn btn-sm"
                       title="Crear Carpeta en Proyecto"
                       onClick={() => onCreateFolder(project.id, null)}
-                      style={{ fontSize: '0.75rem', padding: '0.2rem 0.5rem', background: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8', border: '1px solid rgba(56, 189, 248, 0.3)' }}
+                      className="px-2 py-0.5 text-[11px] rounded bg-sky-500/15 text-sky-400 border border-sky-500/30 font-medium cursor-pointer"
                     >
-                      <i className="fa-solid fa-folder-plus"></i> Carpeta
+                      <i className="fa-solid fa-folder-plus mr-1"></i> Carpeta
                     </button>
                   )}
                   {onDeleteProject && (
                     <button
                       type="button"
-                      className="btn btn-sm"
                       title="Eliminar Proyecto"
                       onClick={() => onDeleteProject(project.id)}
-                      style={{ fontSize: '0.75rem', padding: '0.2rem 0.4rem', background: 'rgba(239, 68, 68, 0.15)', color: '#ef4444', border: '1px solid rgba(239, 68, 68, 0.3)' }}
+                      className="px-2 py-0.5 text-[11px] rounded bg-red-500/15 text-red-400 border border-red-500/30 cursor-pointer"
                     >
                       <i className="fa-solid fa-trash"></i>
                     </button>
@@ -345,7 +299,7 @@ export default function FolderTree({
             </div>
 
             {!isCollapsed && (
-              <div className="project-children" style={{ marginTop: '0.4rem' }}>
+              <div className="mt-1 space-y-1">
                 {/* Top-level folders under project */}
                 {projectFolders.map(folder => renderFolder(folder, project.id))}
 
@@ -358,42 +312,31 @@ export default function FolderTree({
       })}
 
       {/* General / Unassigned Sources Section */}
-      <div className="project-node unassigned-node" style={{ marginBottom: '1rem' }}>
-        <div 
-          className="project-header"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '0.5rem 0.75rem',
-            background: 'rgba(255, 255, 255, 0.04)',
-            borderRadius: '0.5rem',
-            border: '1px solid var(--border-glass)'
-          }}
-        >
+      <div className="flex flex-col">
+        <div className="flex items-center justify-between p-2 rounded-lg bg-white/[0.03] border border-white/10 text-xs">
           <div 
             onClick={() => toggleProjectCollapse('proj_general')} 
-            style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexGrow: 1, cursor: 'pointer' }}
+            className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer"
           >
-            <span style={{ width: '1.25rem', color: '#94a3b8' }}>
+            <span className="w-4 text-zinc-400 text-center">
               <i className={`fa-solid ${collapsedProjects['proj_general'] ? 'fa-chevron-right' : 'fa-chevron-down'}`}></i>
             </span>
-            <span style={{ color: '#94a3b8', fontSize: '1rem' }}>
+            <span className="text-zinc-400">
               <i className="fa-solid fa-folder-open"></i>
             </span>
-            <span style={{ fontWeight: 600, fontSize: '0.875rem', color: '#cbd5e1' }}>
+            <span className="font-semibold text-zinc-300 truncate">
               Fuentes Generales (Sin Proyecto)
             </span>
-            <span style={{ fontSize: '0.75rem', color: '#64748b', marginLeft: '0.25rem' }}>
+            <span className="text-[11px] text-zinc-500 shrink-0">
               ({unassignedSources.length})
             </span>
           </div>
         </div>
 
         {!collapsedProjects['proj_general'] && (
-          <div className="project-children" style={{ marginTop: '0.4rem' }}>
+          <div className="mt-1 space-y-1">
             {unassignedSources.length === 0 ? (
-              <div style={{ fontSize: '0.75rem', color: '#64748b', padding: '0.5rem 1.25rem' }}>
+              <div className="text-[11px] text-zinc-500 px-4 py-2 italic">
                 No hay fuentes sueltas sin proyecto.
               </div>
             ) : (

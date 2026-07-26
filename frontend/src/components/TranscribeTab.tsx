@@ -78,70 +78,77 @@ export default function TranscribeTab({
   const handleBackendChange = (e: ChangeEvent<HTMLSelectElement>) => {
     const val = e.target.value;
     setBackend(val);
-    if (val === 'whisperx') {
-      setAlign(true);
-      setDiarize(true);
+    if (val === 'nemo') {
+      setAlign(false);
     }
   };
-  
-  // Operation states
+
+  // UI state
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
-  const [isConcatenating, setIsConcatenating] = useState<boolean>(false);
-  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
-  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
-  
+
+  // References to file inputs
   const fileInputRef = useRef<HTMLInputElement>(null);
   const batchFileInputRef = useRef<HTMLInputElement>(null);
   const concatInputRef = useRef<HTMLInputElement>(null);
 
-  // Single File Upload Handler
+  // Drag and drop states for concat ordering
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const [isConcatenating, setIsConcatenating] = useState<boolean>(false);
+
+  // Synchronize state when background task status changes
+  React.useEffect(() => {
+    if (statusData) {
+      setIsProcessing(statusData.is_running);
+    }
+  }, [statusData]);
+
   const handleSingleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       setFile(e.target.files[0]);
     }
   };
 
-  // Batch File Upload Handler
   const handleBatchFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      const selectedFiles = Array.from(e.target.files);
-      const newItems: TranscribeQueueItem[] = selectedFiles.map(f => ({
-        id: `${f.name}-${f.size}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      const newFiles = Array.from(e.target.files).map(f => ({
+        id: Math.random().toString(36).substring(2, 9),
         file: f,
-        status: 'pending'
+        status: 'pending' as const
       }));
-      setBatchQueue(prev => [...prev, ...newItems]);
-      e.target.value = '';
+      setBatchQueue(prev => [...prev, ...newFiles]);
     }
   };
 
   const removeBatchQueueItem = (id: string) => {
-    if (isProcessing) return;
     setBatchQueue(prev => prev.filter(item => item.id !== id));
   };
 
   const clearBatchQueue = () => {
-    if (isProcessing) return;
     setBatchQueue([]);
   };
 
-  // Concat File Selection Handler
   const handleConcatFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      const selected = Array.from(e.target.files);
-      setConcatFilesList((prev) => [...prev, ...selected]);
-      e.target.value = '';
+      const added = Array.from(e.target.files);
+      setConcatFilesList(prev => [...prev, ...added]);
     }
   };
 
   const removeConcatItem = (index: number) => {
-    setConcatFilesList((prev) => prev.filter((_, i) => i !== index));
+    setConcatFilesList(prev => prev.filter((_, i) => i !== index));
   };
 
-  // Drag and Drop reordering handlers
+  // Drag & drop handlers for concatenating list
   const handleDragStart = (e: DragEvent<HTMLDivElement>, index: number) => {
     setDraggedIndex(index);
     e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e: DragEvent<HTMLDivElement>, index: number) => {
+    e.preventDefault();
+    if (draggedIndex === null || draggedIndex === index) return;
+    setDragOverIndex(index);
   };
 
   const handleDragEnd = () => {
@@ -149,252 +156,211 @@ export default function TranscribeTab({
     setDragOverIndex(null);
   };
 
-  const handleDragOver = (e: DragEvent<HTMLDivElement>, index: number) => {
+  const handleDrop = (e: DragEvent<HTMLDivElement>, targetIndex: number) => {
     e.preventDefault();
-    setDragOverIndex(index);
-  };
-
-  const handleDrop = (e: DragEvent<HTMLDivElement>, index: number) => {
-    e.preventDefault();
-    if (draggedIndex === null || draggedIndex === index) return;
+    if (draggedIndex === null || draggedIndex === targetIndex) return;
     
     const updatedList = [...concatFilesList];
     const [movedItem] = updatedList.splice(draggedIndex, 1);
-    updatedList.splice(index, 0, movedItem);
+    updatedList.splice(targetIndex, 0, movedItem);
     
     setConcatFilesList(updatedList);
     setDraggedIndex(null);
     setDragOverIndex(null);
   };
 
-  // Execute Concatenation
   const handleExecuteConcat = async () => {
-    if (concatFilesList.length < 2) {
-      alert('Por favor agrega al menos 2 archivos para concatenar.');
+    if (concatFilesList.length === 0) {
+      alert("Por favor agrega al menos un archivo para concatenar.");
       return;
     }
-
-    setIsConcatenating(true);
-    const formData = new FormData();
-    concatFilesList.forEach((f) => {
-      formData.append('files', f);
-    });
-
     try {
-      const res = await fetch('/api/media/concat', {
+      setIsConcatenating(true);
+      const formData = new FormData();
+      concatFilesList.forEach(f => formData.append('files', f));
+      
+      const res = await fetch('/api/transcribe/concat', {
         method: 'POST',
         body: formData
       });
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || 'Fallo en la concatenación en el servidor.');
-      }
-
       const data = await res.json();
-      alert(`Archivos concatenados con éxito como: ${data.filepath}`);
+      if (!res.ok) throw new Error(data.detail || "Error al concatenar");
       
-      setLocalPath(data.filepath);
+      setLocalPath(data.concat_path);
       setInputMethod('path');
-      setConcatFilesList([]);
+      alert(`¡Audios concatenados con éxito! Ruta guardada:\n${data.concat_path}`);
     } catch (err: any) {
-      console.error(err);
-      alert(`Error al concatenar audios: ${err.message}`);
+      alert(`Error de concatenación: ${err.message}`);
     } finally {
       setIsConcatenating(false);
     }
   };
 
-  // Submit Form Handler
   const handleFormSubmit = async (e: FormEvent) => {
     e.preventDefault();
 
-    if (inputMethod === 'upload') {
-      if (!file) {
-        alert('Por favor selecciona un archivo para subir.');
-        return;
-      }
-      await processSingleTranscription(file, undefined);
-    } else if (inputMethod === 'path') {
-      if (!localPath.trim()) {
-        alert('Por favor escribe una ruta de archivo local.');
-        return;
-      }
-      await processSingleTranscription(null, localPath.trim());
-    } else if (inputMethod === 'batch') {
-      const pendingItems = batchQueue.filter(item => item.status === 'pending');
-      if (pendingItems.length === 0) {
-        alert('Por favor agrega al menos un archivo a la cola de procesamiento en lote.');
-        return;
-      }
-
-      setIsProcessing(true);
-      startPollingStatus();
-
-      for (const item of pendingItems) {
-        setBatchQueue(prev => prev.map(q => q.id === item.id ? { ...q, status: 'processing' } : q));
-
-        try {
-          const formData = new FormData();
-          formData.append('backend', backend);
-          formData.append('model_name', model);
-          formData.append('language', language);
-          formData.append('align', align ? 'true' : 'false');
-          formData.append('diarize', diarize ? 'true' : 'false');
-          if (diarize && hfToken.trim()) {
-            formData.append('hf_token', hfToken);
-          }
-          formData.append('file', item.file);
-
-          const res = await fetch('/api/transcribe', {
-            method: 'POST',
-            body: formData
-          });
-
-          if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.detail || 'Fallo en la transcripción.');
-          }
-
-          const data = await res.json();
-          setBatchQueue(prev => prev.map(q => q.id === item.id ? {
-            ...q,
-            status: 'success',
-            transcriptionId: data.id
-          } : q));
-
-          if (onTranscriptionSuccess) {
-            onTranscriptionSuccess(data.id);
-          }
-        } catch (err: any) {
-          console.error(err);
-          setBatchQueue(prev => prev.map(q => q.id === item.id ? {
-            ...q,
-            status: 'error',
-            errorMsg: err.message || 'Error durante la transcripción.'
-          } : q));
-        }
-      }
-
-      setIsProcessing(false);
-      stopPollingStatus();
+    if (inputMethod === 'upload' && !file) {
+      alert("Por favor selecciona un archivo de audio/video para transcribir.");
+      return;
     }
-  };
+    if (inputMethod === 'batch' && batchQueue.length === 0) {
+      alert("Por favor selecciona al menos un archivo en la cola de procesamiento en lote.");
+      return;
+    }
+    if (inputMethod === 'path' && !localPath.trim()) {
+      alert("Por favor escribe una ruta válida de archivo.");
+      return;
+    }
 
-  const processSingleTranscription = async (fileObj: File | null, pathStr?: string) => {
     setIsProcessing(true);
     startPollingStatus();
 
-    const formData = new FormData();
-    formData.append('backend', backend);
-    formData.append('model_name', model);
-    formData.append('language', language);
-    formData.append('align', align ? 'true' : 'false');
-    formData.append('diarize', diarize ? 'true' : 'false');
-    if (diarize && hfToken.trim()) {
-      formData.append('hf_token', hfToken);
-    }
-
-    if (fileObj) {
-      formData.append('file', fileObj);
-    } else if (pathStr) {
-      formData.append('filePath', pathStr);
-    }
-
     try {
-      const res = await fetch('/api/transcribe', {
-        method: 'POST',
-        body: formData
-      });
+      if (inputMethod === 'batch') {
+        const formData = new FormData();
+        batchQueue.forEach(item => formData.append('files', item.file));
+        formData.append('backend', backend);
+        formData.append('model', model);
+        if (language) formData.append('language', language);
+        formData.append('diarize', String(diarize));
+        if (hfToken) formData.append('hf_token', hfToken);
+        formData.append('align', String(align));
 
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || 'Fallo en la transcripción.');
-      }
+        const response = await fetch('/api/transcribe/batch', {
+          method: 'POST',
+          body: formData,
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || 'Falló el inicio del lote');
 
-      const data = await res.json();
-      if (onTranscriptionSuccess) {
-        onTranscriptionSuccess(data.id);
+        alert(`Lote iniciado: ${data.total_queued} archivos en cola.`);
+      } else {
+        const formData = new FormData();
+        if (inputMethod === 'upload' && file) {
+          formData.append('file', file);
+        } else if (inputMethod === 'path') {
+          formData.append('file_path', localPath);
+        }
+        
+        formData.append('backend', backend);
+        formData.append('model', model);
+        if (language) formData.append('language', language);
+        formData.append('diarize', String(diarize));
+        if (hfToken) formData.append('hf_token', hfToken);
+        formData.append('align', String(align));
+
+        const response = await fetch('/api/transcribe', {
+          method: 'POST',
+          body: formData,
+        });
+
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || 'Falló la transcripción');
+
+        if (data.id) {
+          onTranscriptionSuccess(data.id);
+        }
       }
     } catch (err: any) {
-      console.error(err);
-      alert(`Error durante la transcripción: ${err.message}`);
-    } finally {
+      alert(`Error en el proceso: ${err.message}`);
       setIsProcessing(false);
       stopPollingStatus();
     }
   };
 
   const handleAbort = async () => {
-    if (!confirm('¿Estás seguro de que deseas abortar el procesamiento actual?')) return;
     try {
-      await fetch('/api/abort', { method: 'POST' });
-      alert('Aborto solicitado al servidor.');
+      await fetch('/api/transcribe/abort', { method: 'POST' });
+      setIsProcessing(false);
+      stopPollingStatus();
     } catch (err) {
-      console.error(err);
+      console.error("Error al abortar:", err);
     }
   };
 
-  const pendingBatchCount = batchQueue.filter(q => q.status === 'pending').length;
+  const pendingBatchCount = batchQueue.filter(i => i.status === 'pending' || i.status === 'processing').length;
 
   return (
-    <section id="transcription-tab" className={`tab-panel ${active ? 'active' : ''}`}>
-      <div className="panel-header">
-        <h2>Nueva Transcripción</h2>
-        <p>Sube un archivo multimedia, procesa en lote o escribe una ruta local para transcribirlo con aceleración GPU NVIDIA CUDA.</p>
+    <section id="transcription-tab" className={`flex-col gap-6 w-full ${active ? 'flex' : 'hidden'}`}>
+      {/* Header */}
+      <div className="mb-1">
+        <h2 className="text-2xl font-semibold text-white tracking-tight mb-1">Nueva Transcripción</h2>
+        <p className="text-sm text-zinc-400">Sube un archivo multimedia, procesa en lote o escribe una ruta local para transcribirlo con aceleración GPU NVIDIA CUDA.</p>
       </div>
 
-      <div className="grid-layout">
-        {/* Left Side: Parameters and inputs */}
-        <form className="card glass-card" onSubmit={handleFormSubmit}>
-          {/* Method Selector with 4 Tab Buttons */}
-          <div className="form-group">
-            <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600, fontSize: '0.875rem' }}>Método de Entrada</label>
-            <div className="tab-toggle" style={{ marginBottom: '1.25rem' }}>
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start w-full min-w-0">
+        {/* Left Side: Parameters and inputs form */}
+        <form className="p-5 sm:p-6 rounded-xl bg-[#17171c]/75 border border-white/10 backdrop-blur-md shadow-xl flex flex-col gap-5 w-full min-w-0" onSubmit={handleFormSubmit}>
+          {/* Method Selector */}
+          <div className="flex flex-col gap-2">
+            <label className="text-xs font-semibold text-zinc-200">Método de Entrada</label>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 p-1.5 bg-black/40 border border-white/10 rounded-xl w-full">
               <button
                 type="button"
-                className={`toggle-btn ${inputMethod === 'upload' ? 'active' : ''}`}
+                className={`flex items-center justify-center gap-1.5 py-2 px-2 text-xs font-medium rounded-lg transition-colors cursor-pointer ${
+                  inputMethod === 'upload'
+                    ? 'bg-amber-500/15 border border-amber-500/35 text-amber-400 font-semibold shadow-sm'
+                    : 'text-zinc-400 hover:text-white hover:bg-white/5 border border-transparent'
+                }`}
                 onClick={() => setInputMethod('upload')}
               >
-                <i className="fa-solid fa-cloud-arrow-up" style={{ color: 'hsl(var(--primary))' }}></i> Subir Archivo
+                <i className="fa-solid fa-cloud-arrow-up text-amber-500"></i> Subir Archivo
               </button>
+
               <button
                 type="button"
-                className={`toggle-btn ${inputMethod === 'batch' ? 'active' : ''}`}
+                className={`flex items-center justify-center gap-1.5 py-2 px-2 text-xs font-medium rounded-lg transition-colors cursor-pointer ${
+                  inputMethod === 'batch'
+                    ? 'bg-amber-500/15 border border-amber-500/35 text-amber-400 font-semibold shadow-sm'
+                    : 'text-zinc-400 hover:text-white hover:bg-white/5 border border-transparent'
+                }`}
                 onClick={() => setInputMethod('batch')}
               >
-                <i className="fa-solid fa-layer-group" style={{ color: 'var(--accent-light)' }}></i> Procesar Lote
+                <i className="fa-solid fa-layer-group text-orange-400"></i> Procesar Lote
               </button>
+
               <button
                 type="button"
-                className={`toggle-btn ${inputMethod === 'path' ? 'active' : ''}`}
+                className={`flex items-center justify-center gap-1.5 py-2 px-2 text-xs font-medium rounded-lg transition-colors cursor-pointer ${
+                  inputMethod === 'path'
+                    ? 'bg-amber-500/15 border border-amber-500/35 text-amber-400 font-semibold shadow-sm'
+                    : 'text-zinc-400 hover:text-white hover:bg-white/5 border border-transparent'
+                }`}
                 onClick={() => setInputMethod('path')}
               >
-                <i className="fa-solid fa-folder-open" style={{ color: '#a855f7' }}></i> Ruta Local
+                <i className="fa-solid fa-folder-open text-purple-400"></i> Ruta Local
               </button>
+
               <button
                 type="button"
-                className={`toggle-btn ${inputMethod === 'concat' ? 'active' : ''}`}
+                className={`flex items-center justify-center gap-1.5 py-2 px-2 text-xs font-medium rounded-lg transition-colors cursor-pointer ${
+                  inputMethod === 'concat'
+                    ? 'bg-amber-500/15 border border-amber-500/35 text-amber-400 font-semibold shadow-sm'
+                    : 'text-zinc-400 hover:text-white hover:bg-white/5 border border-transparent'
+                }`}
                 onClick={() => setInputMethod('concat')}
               >
-                <i className="fa-solid fa-object-group" style={{ color: '#10b981' }}></i> Concatenar
+                <i className="fa-solid fa-object-group text-emerald-400"></i> Concatenar
               </button>
             </div>
           </div>
 
           {/* Single File Upload Input */}
           {inputMethod === 'upload' && (
-            <div className="form-group">
-              <div className="drop-zone" onClick={() => fileInputRef.current?.click()} style={{ cursor: 'pointer' }}>
-                <i className="fa-solid fa-cloud-arrow-up drop-icon"></i>
-                <span className="drop-text">Arrastra tu archivo de audio/video o haz clic para buscar</span>
-                <span className="file-name-label">{file ? file.name : 'Ningún archivo seleccionado'}</span>
+            <div className="flex flex-col gap-1.5">
+              <div 
+                className="border-2 border-dashed border-white/15 hover:border-amber-500 rounded-xl p-8 text-center cursor-pointer flex flex-col items-center gap-3 bg-white/[0.01] hover:bg-white/[0.03] transition-colors"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <i className="fa-solid fa-cloud-arrow-up text-3xl text-zinc-500"></i>
+                <span className="text-xs text-zinc-400">Arrastra tu archivo de audio/video o haz clic para buscar</span>
+                <span className="text-xs font-semibold text-amber-400 break-all">{file ? file.name : 'Ningún archivo seleccionado'}</span>
                 <input
                   type="file"
                   ref={fileInputRef}
                   onChange={handleSingleFileChange}
                   accept="audio/*,video/*"
-                  style={{ display: 'none' }}
+                  className="hidden"
                 />
               </div>
             </div>
@@ -402,14 +368,15 @@ export default function TranscribeTab({
 
           {/* Batch File Queue Upload Input */}
           {inputMethod === 'batch' && (
-            <div className="form-group">
-              <div className="drop-zone" onClick={() => batchFileInputRef.current?.click()} style={{ cursor: 'pointer' }}>
-                <i className="fa-solid fa-layer-group drop-icon"></i>
-                <span className="drop-text">Arrastra múltiples archivos de audio/video para crear un lote</span>
-                <span className="file-name-label">
-                  {batchQueue.length > 0 
-                    ? `${batchQueue.length} archivo(s) agregados` 
-                    : 'Ningún archivo seleccionado'}
+            <div className="flex flex-col gap-3">
+              <div 
+                className="border-2 border-dashed border-white/15 hover:border-amber-500 rounded-xl p-8 text-center cursor-pointer flex flex-col items-center gap-3 bg-white/[0.01] hover:bg-white/[0.03] transition-colors"
+                onClick={() => batchFileInputRef.current?.click()}
+              >
+                <i className="fa-solid fa-layer-group text-3xl text-zinc-500"></i>
+                <span className="text-xs text-zinc-400">Arrastra múltiples archivos de audio/video para crear un lote</span>
+                <span className="text-xs font-semibold text-amber-400 break-all">
+                  {batchQueue.length > 0 ? `${batchQueue.length} archivo(s) agregados` : 'Ningún archivo seleccionado'}
                 </span>
                 <input
                   type="file"
@@ -417,42 +384,42 @@ export default function TranscribeTab({
                   onChange={handleBatchFileChange}
                   accept="audio/*,video/*"
                   multiple
-                  style={{ display: 'none' }}
+                  className="hidden"
                 />
               </div>
 
               {batchQueue.length > 0 && (
-                <div className="concat-list" style={{ marginTop: '1rem' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-                    <h4 style={{ margin: 0 }}>Archivos en la cola de transcripción ({batchQueue.length}):</h4>
+                <div className="flex flex-col gap-2 mt-2">
+                  <div className="flex justify-between items-center text-xs font-medium text-zinc-300">
+                    <span>Archivos en la cola ({batchQueue.length}):</span>
                     {!isProcessing && (
                       <button
                         type="button"
                         onClick={clearBatchQueue}
-                        style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '0.8rem', cursor: 'pointer' }}
+                        className="text-zinc-400 hover:text-red-400 text-xs flex items-center gap-1 cursor-pointer"
                       >
                         <i className="fa-solid fa-trash-can"></i> Limpiar todo
                       </button>
                     )}
                   </div>
 
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '200px', overflowY: 'auto' }}>
+                  <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto pr-1">
                     {batchQueue.map((item, idx) => (
-                      <div key={item.id} className="concat-item" style={{ marginBottom: 0 }}>
-                        <span className="concat-item-text">
-                          <strong>{idx + 1}.</strong> {item.file.name}
+                      <div key={item.id} className="flex items-center justify-between p-2 rounded-lg bg-white/[0.02] border border-white/10 text-xs">
+                        <span className="truncate max-w-[70%] text-zinc-300">
+                          <strong className="text-amber-400 mr-1">{idx + 1}.</strong> {item.file.name}
                         </span>
 
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                          {item.status === 'pending' && <span style={{ fontSize: '0.75rem', color: '#fde047' }}><i className="fa-solid fa-clock"></i> Pendiente</span>}
-                          {item.status === 'processing' && <span style={{ fontSize: '0.75rem', color: '#818cf8' }}><i className="fa-solid fa-spinner fa-spin"></i> Transcribiendo...</span>}
-                          {item.status === 'success' && <span style={{ fontSize: '0.75rem', color: '#4ade80' }}><i className="fa-solid fa-check"></i> Transcrito</span>}
-                          {item.status === 'error' && <span style={{ fontSize: '0.75rem', color: '#f87171' }}><i className="fa-solid fa-xmark"></i> Error</span>}
+                        <div className="flex items-center gap-2 shrink-0">
+                          {item.status === 'pending' && <span className="text-yellow-300 text-[11px]"><i className="fa-solid fa-clock mr-1"></i> Pendiente</span>}
+                          {item.status === 'processing' && <span className="text-indigo-400 text-[11px]"><i className="fa-solid fa-spinner fa-spin mr-1"></i> Transcribiendo...</span>}
+                          {item.status === 'success' && <span className="text-emerald-400 text-[11px]"><i className="fa-solid fa-check mr-1"></i> Transcrito</span>}
+                          {item.status === 'error' && <span className="text-red-400 text-[11px]"><i className="fa-solid fa-xmark mr-1"></i> Error</span>}
                           
                           {!isProcessing && (
                             <button
                               type="button"
-                              className="btn-remove-concat-item"
+                              className="text-zinc-500 hover:text-red-400 cursor-pointer"
                               onClick={() => removeBatchQueueItem(item.id)}
                             >
                               <i className="fa-solid fa-xmark"></i>
@@ -469,12 +436,14 @@ export default function TranscribeTab({
 
           {/* Local File Path Input */}
           {inputMethod === 'path' && (
-            <div className="form-group">
-              <label htmlFor="file-path-input"><i className="fa-solid fa-folder-open"></i> Ruta absoluta o relativa al proyecto:</label>
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="file-path-input" className="text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
+                <i className="fa-solid fa-folder-open text-amber-500"></i> Ruta absoluta o relativa al proyecto:
+              </label>
               <input
                 type="text"
                 id="file-path-input"
-                className="form-control"
+                className="w-full bg-white/[0.03] border border-white/10 rounded-lg text-white px-3.5 py-2 text-sm focus:outline-none focus:border-amber-500 focus:bg-white/[0.05] transition-colors"
                 placeholder="/home/usuario/Grabaciones/reunion.mp3 o uploads/concat_xxxx.mp3"
                 value={localPath}
                 onChange={(e) => setLocalPath(e.target.value)}
@@ -484,45 +453,48 @@ export default function TranscribeTab({
 
           {/* Concatenation Standalone View */}
           {inputMethod === 'concat' && (
-            <div className="form-group">
-              <div className="drop-zone" onClick={() => concatInputRef.current?.click()} style={{ cursor: 'pointer' }}>
-                <i className="fa-solid fa-layer-group drop-icon"></i>
-                <span className="drop-text">Haz clic aquí para agregar partes de audio/video una por una</span>
-                <span className="file-name-label">
-                  {concatFilesList.length > 0 
-                    ? `${concatFilesList.length} partes agregadas` 
-                    : 'Ningún archivo seleccionado'}
+            <div className="flex flex-col gap-3">
+              <div 
+                className="border-2 border-dashed border-white/15 hover:border-amber-500 rounded-xl p-8 text-center cursor-pointer flex flex-col items-center gap-3 bg-white/[0.01] hover:bg-white/[0.03] transition-colors"
+                onClick={() => concatInputRef.current?.click()}
+              >
+                <i className="fa-solid fa-layer-group text-3xl text-zinc-500"></i>
+                <span className="text-xs text-zinc-400">Haz clic aquí para agregar partes de audio/video una por una</span>
+                <span className="text-xs font-semibold text-amber-400 break-all">
+                  {concatFilesList.length > 0 ? `${concatFilesList.length} partes agregadas` : 'Ningún archivo seleccionado'}
                 </span>
                 <input
                   type="file"
                   ref={concatInputRef}
                   onChange={handleConcatFileChange}
                   accept="audio/*,video/*"
-                  style={{ display: 'none' }}
+                  className="hidden"
                 />
               </div>
 
               {concatFilesList.length > 0 && (
-                <div className="concat-list" style={{ marginTop: '1rem' }}>
-                  <h4>Archivos a concatenar (se unirán en este orden):</h4>
-                  <div style={{ marginBottom: '1rem' }}>
+                <div className="flex flex-col gap-2 mt-2">
+                  <span className="text-xs font-medium text-zinc-300">Archivos a concatenar (se unirán en este orden):</span>
+                  <div className="flex flex-col gap-1.5">
                     {concatFilesList.map((item, idx) => (
                       <div
                         key={idx}
-                        className={`concat-item ${draggedIndex === idx ? 'dragging' : ''} ${dragOverIndex === idx ? 'drag-over' : ''}`}
+                        className={`flex items-center justify-between p-2.5 rounded-lg bg-white/[0.02] border border-white/10 text-xs ${
+                          draggedIndex === idx ? 'opacity-50' : ''
+                        } ${dragOverIndex === idx ? 'border-amber-500' : ''}`}
                         draggable
                         onDragStart={(e) => handleDragStart(e, idx)}
                         onDragEnd={handleDragEnd}
                         onDragOver={(e) => handleDragOver(e, idx)}
                         onDrop={(e) => handleDrop(e, idx)}
                       >
-                        <span className="concat-drag-handle"><i className="fa-solid fa-grip-vertical"></i></span>
-                        <span className="concat-item-text">
-                          <strong>{idx + 1}.</strong> {item.name}
+                        <span className="cursor-grab text-zinc-500 mr-2"><i className="fa-solid fa-grip-vertical"></i></span>
+                        <span className="truncate flex-1 text-zinc-300">
+                          <strong className="text-amber-400 mr-1">{idx + 1}.</strong> {item.name}
                         </span>
                         <button
                           type="button"
-                          className="btn-remove-concat-item"
+                          className="text-zinc-500 hover:text-red-400 cursor-pointer ml-2"
                           onClick={() => removeConcatItem(idx)}
                         >
                           <i className="fa-solid fa-xmark"></i>
@@ -532,7 +504,7 @@ export default function TranscribeTab({
                   </div>
                   <button
                     type="button"
-                    className="btn btn-secondary btn-full"
+                    className="w-full py-2.5 px-4 bg-white/10 hover:bg-white/15 text-white font-medium text-xs rounded-lg transition-colors cursor-pointer disabled:opacity-50 mt-2 flex items-center justify-center gap-2"
                     disabled={isConcatenating}
                     onClick={handleExecuteConcat}
                   >
@@ -547,24 +519,33 @@ export default function TranscribeTab({
             </div>
           )}
 
-          {/* Model selection & Transcription Form Options (Hidden when Concatenating) */}
+          {/* Model selection & Form Options */}
           {inputMethod !== 'concat' && (
             <>
-              <div className="form-row">
-                <div className="form-group col">
-                  <label htmlFor="backend">Motor / Pipeline</label>
-                  <select id="backend" className="form-control" value={backend} onChange={handleBackendChange}>
-                    <option value="whisperx">WhisperX (Recomendado - Acelerado CUDA + PyAnnote)</option>
-                    <option value="nemo">NVIDIA NeMo Parakeet TDT (Soporte Español nativo)</option>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="flex flex-col gap-1.5">
+                  <label htmlFor="backend" className="text-xs font-semibold text-zinc-300">Motor / Pipeline</label>
+                  <select 
+                    id="backend" 
+                    className="w-full bg-[#1e293b] border border-white/10 rounded-lg text-white px-3 py-2 text-xs focus:outline-none focus:border-amber-500 transition-colors" 
+                    value={backend} 
+                    onChange={handleBackendChange}
+                  >
+                    <option value="whisperx">WhisperX (Recomendado - CUDA + PyAnnote)</option>
+                    <option value="nemo">NVIDIA NeMo Parakeet TDT (Español Nativo)</option>
                   </select>
                 </div>
 
-                <div className="form-group col">
-                  <label htmlFor="model">Modelo Whisper</label>
-                  <select id="model" className="form-control" value={model} onChange={(e) => setModel(e.target.value)}>
+                <div className="flex flex-col gap-1.5">
+                  <label htmlFor="model" className="text-xs font-semibold text-zinc-300">Modelo Whisper</label>
+                  <select 
+                    id="model" 
+                    className="w-full bg-[#1e293b] border border-white/10 rounded-lg text-white px-3 py-2 text-xs focus:outline-none focus:border-amber-500 transition-colors" 
+                    value={model} 
+                    onChange={(e) => setModel(e.target.value)}
+                  >
                     <option value="large-v3">large-v3 (Máxima Precisión)</option>
                     <option value="large-v2">large-v2</option>
-
                     <option value="medium">medium</option>
                     <option value="small">small</option>
                     <option value="base">base</option>
@@ -573,61 +554,58 @@ export default function TranscribeTab({
                 </div>
               </div>
 
-              <div className="form-row">
-                <div className="form-group col">
-                  <label htmlFor="language">Idioma (opcional)</label>
-                  <input
-                    type="text"
-                    id="language"
-                    className="form-control"
-                    placeholder="es, en, fr... (auto-detectar si está vacío)"
-                    value={language}
-                    onChange={(e) => setLanguage(e.target.value)}
-                  />
-                </div>
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="language" className="text-xs font-semibold text-zinc-300">Idioma (opcional)</label>
+                <input
+                  type="text"
+                  id="language"
+                  className="w-full bg-white/[0.03] border border-white/10 rounded-lg text-white px-3.5 py-2 text-xs focus:outline-none focus:border-amber-500 transition-colors"
+                  placeholder="es, en, fr... (auto-detectar si está vacío)"
+                  value={language}
+                  onChange={(e) => setLanguage(e.target.value)}
+                />
               </div>
 
               {/* Checkboxes */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', margin: '1rem 0' }}>
-                <label className="checkbox-container">
+              <div className="flex flex-col gap-2 my-1">
+                <label className="flex items-center gap-2.5 text-xs text-zinc-300 cursor-pointer select-none">
                   <input
                     type="checkbox"
+                    className="w-4 h-4 accent-amber-500 rounded border-white/10 bg-white/5 cursor-pointer"
                     checked={align}
                     disabled={backend !== 'whisperx'}
                     onChange={(e) => setAlign(e.target.checked)}
                   />
-                  <span className="checkmark"></span>
-                  Alineación de Palabras (Wav2Vec2)
+                  <span>Alineación de Palabras (Wav2Vec2)</span>
                 </label>
 
-                <label className="checkbox-container">
+                <label className="flex items-center gap-2.5 text-xs text-zinc-300 cursor-pointer select-none">
                   <input
                     type="checkbox"
+                    className="w-4 h-4 accent-amber-500 rounded border-white/10 bg-white/5 cursor-pointer"
                     checked={diarize}
                     onChange={(e) => setDiarize(e.target.checked)}
                   />
-                  <span className="checkmark"></span>
-                  Diarización de Hablantes (PyAnnote Audio)
+                  <span>Diarización de Hablantes (PyAnnote Audio)</span>
                 </label>
               </div>
 
               {/* HF Token Input for Diarization */}
               {diarize && (
-                <div className="form-group" style={{ marginTop: '0.5rem', padding: '0.75rem', backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.08)' }}>
-                  <label htmlFor="hf-token-input" style={{ fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                    <i className="fa-solid fa-key" style={{ color: '#f59e0b' }}></i> Token de HuggingFace (Requerido para PyAnnote):
+                <div className="p-3 rounded-lg bg-white/[0.03] border border-white/10 flex flex-col gap-1.5">
+                  <label htmlFor="hf-token-input" className="text-xs font-medium text-zinc-300 flex items-center gap-1.5">
+                    <i className="fa-solid fa-key text-amber-400"></i> Token de HuggingFace (PyAnnote):
                   </label>
                   <input
                     type="password"
                     id="hf-token-input"
-                    className="form-control"
+                    className="w-full bg-white/[0.04] border border-white/10 rounded-lg text-white px-3 py-1.5 text-xs focus:outline-none focus:border-amber-500"
                     placeholder={hasHfToken ? "hf_... (Configurado en .env - Dejar vacío para usar default)" : "hf_... (Pega tu token hf_api_...)"}
                     value={hfToken}
                     onChange={(e) => setHfToken(e.target.value)}
-                    style={{ fontSize: '0.85rem', marginTop: '0.3rem' }}
                   />
                   {hasHfToken && !hfToken && (
-                    <span style={{ fontSize: '0.75rem', color: '#10b981', marginTop: '0.25rem', display: 'block' }}>
+                    <span className="text-[11px] text-emerald-400 flex items-center gap-1">
                       <i className="fa-solid fa-check-circle"></i> Token detectado en variables de entorno (.env)
                     </span>
                   )}
@@ -635,11 +613,11 @@ export default function TranscribeTab({
               )}
 
               {/* Buttons */}
-              <div className="form-actions" style={{ display: 'flex', gap: '0.75rem', marginTop: '1.25rem' }}>
+              <div className="flex items-center gap-3 mt-2">
                 <button
                   type="submit"
                   id="btn-start-transcribe"
-                  className="submit-btn btn-full"
+                  className="flex-1 py-3 px-5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-zinc-950 font-semibold text-sm rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 transition-all cursor-pointer disabled:opacity-50"
                   disabled={isProcessing}
                 >
                   {isProcessing ? (
@@ -654,9 +632,8 @@ export default function TranscribeTab({
                 {isProcessing && (
                   <button
                     type="button"
-                    className="btn btn-danger"
+                    className="py-3 px-4 bg-red-600 hover:bg-red-500 text-white font-semibold text-sm rounded-xl flex items-center justify-center gap-2 transition-colors cursor-pointer"
                     onClick={handleAbort}
-                    style={{ backgroundColor: '#ef4444', color: '#fff' }}
                   >
                     <i className="fa-solid fa-stop"></i> Abortar
                   </button>
@@ -667,97 +644,106 @@ export default function TranscribeTab({
         </form>
 
         {/* Right Side: Status output and Viewer */}
-        <div className="status-panel-container">
-          <div className="card glass-card status-card">
-            <h3>Estado del Servidor CUDA & Whisper</h3>
+        <div className="flex flex-col gap-6 w-full min-w-0">
+          {/* CUDA & Whisper Status Card */}
+          <div className="p-5 sm:p-6 rounded-xl bg-[#17171c]/75 border border-white/10 backdrop-blur-md shadow-xl flex flex-col gap-4 w-full min-w-0">
+            <h3 className="text-lg font-semibold text-white">Estado del Servidor CUDA & Whisper</h3>
             {statusData ? (
-              <div className="status-details">
-                <div className="status-badge-container" style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem' }}>
-                  <span className={`badge ${statusData.is_running ? 'processing' : 'ready'}`}>
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={`px-2.5 py-1 rounded-md text-xs font-semibold uppercase tracking-wider ${
+                    statusData.is_running ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30' : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                  }`}>
                     {String(statusData.status || (statusData.is_running ? 'PROCESANDO' : 'LISTO')).toUpperCase()}
                   </span>
-                  <span className="badge badge-backend">
+                  <span className="px-2.5 py-1 rounded-md text-xs font-semibold uppercase tracking-wider bg-amber-500/20 text-amber-400 border border-amber-500/30">
                     {String(statusData.backend || statusData.transcribe_device || 'CUDA GPU').toUpperCase()}
                   </span>
                 </div>
 
                 {/* Stage indicator */}
                 {statusData.is_running && statusData.current_stage && statusData.current_stage !== 'Idle' ? (
-                  <div style={{ fontSize: '0.85rem', color: '#818cf8', fontWeight: 600, marginBottom: '0.5rem' }}>
+                  <div className="text-xs text-indigo-400 font-semibold flex items-center gap-1.5">
                     <i className="fa-solid fa-microchip"></i> Etapa: {statusData.current_stage}
                   </div>
                 ) : (
-                  <div style={{ fontSize: '0.8125rem', color: '#10b981', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                  <div className="text-xs text-emerald-400 font-medium flex items-center gap-1.5">
                     <i className="fa-solid fa-circle-check"></i> Servidor listo (Sin tareas en ejecución)
                   </div>
                 )}
 
                 {/* Live Progress Bar */}
                 {statusData.is_running && (
-                  <div className="progress-bar-container" style={{ margin: '0.75rem 0' }}>
-                    <div className="progress-label" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '0.3rem' }}>
+                  <div className="flex flex-col gap-1.5 my-1">
+                    <div className="flex justify-between text-xs text-zinc-300">
                       <span>Progreso del Audio Actual</span>
-                      <span>{statusData.current_progress || (statusData.progress ? `${statusData.progress}%` : 'En curso...')}</span>
+                      <span className="font-semibold text-amber-400">{statusData.current_progress || (statusData.progress ? `${statusData.progress}%` : 'En curso...')}</span>
                     </div>
-                    <div className="progress-track" style={{ width: '100%', backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: '4px', height: '8px', overflow: 'hidden' }}>
-                      <div className="progress-fill" style={{ width: `${statusData.progress || 100}%`, backgroundColor: '#6366f1', height: '100%', transition: 'width 0.3s ease' }}></div>
+                    <div className="w-full bg-white/10 rounded-full h-2 overflow-hidden">
+                      <div className="bg-amber-500 h-full transition-all duration-300" style={{ width: `${statusData.progress || 100}%` }}></div>
                     </div>
                   </div>
                 )}
 
-                <div className="log-box" style={{ marginTop: '0.5rem' }}>
+                <div className="p-3 rounded-lg bg-black/40 border border-white/10 text-xs font-mono max-h-36 overflow-y-auto space-y-1">
                   {statusData.logs && statusData.logs.length > 0 ? (
-                    statusData.logs.map((log, i) => <div key={i} className="log-line">{log}</div>)
+                    statusData.logs.map((log, i) => <div key={i} className="text-zinc-300 leading-relaxed">{log}</div>)
                   ) : statusData.is_running && statusData.current_progress ? (
-                    <div className="log-line text-muted">{statusData.current_progress}</div>
+                    <div className="text-zinc-400">{statusData.current_progress}</div>
                   ) : (
-                    <div className="log-line text-muted">No hay procesos activos en segundo plano.</div>
+                    <div className="text-zinc-500">No hay procesos activos en segundo plano.</div>
                   )}
                 </div>
               </div>
             ) : (
-              <p className="text-muted">No hay tarea en ejecución en este momento.</p>
+              <p className="text-xs text-zinc-400">No hay tarea en ejecución en este momento.</p>
             )}
           </div>
 
           {/* Historial de Grabaciones */}
-          <div className="card glass-card">
-            <h3>Historial de Grabaciones</h3>
-            <p className="card-desc" style={{ fontSize: '12px', color: 'hsl(var(--text-muted))', marginTop: '-10px', marginBottom: '1rem' }}>
-              Carga o elimina grabaciones previamente procesadas.
-            </p>
-            <div className="history-items-container" style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '250px', overflowY: 'auto', paddingRight: '4px' }}>
+          <div className="p-5 sm:p-6 rounded-xl bg-[#17171c]/75 border border-white/10 backdrop-blur-md shadow-xl flex flex-col gap-3 w-full min-w-0">
+            <div>
+              <h3 className="text-lg font-semibold text-white">Historial de Grabaciones</h3>
+              <p className="text-xs text-zinc-400 mt-0.5">
+                Carga o elimina grabaciones previamente procesadas.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-2 max-h-60 overflow-y-auto pr-1">
               {transcriptionList.length === 0 ? (
-                <div style={{ fontSize: '12px', color: 'hsl(var(--text-muted))', textAlign: 'center', padding: '16px' }}>
+                <div className="text-xs text-zinc-500 text-center py-6">
                   Ninguna grabación guardada.
                 </div>
               ) : (
                 transcriptionList.map((item) => (
-                  <div key={item.id} className={`history-item ${activeTranscriptionId === item.id ? 'active' : ''}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255, 255, 255, 0.02)', padding: '0.5rem', borderRadius: '0.25rem', border: '1px solid var(--border-glass)' }}>
-                    <div className="history-item-info" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', flexGrow: 1, paddingRight: '0.5rem' }}>
-                      <span className="history-item-title" title={item.filename} style={{ fontSize: '0.8125rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--accent-light)' }}>
+                  <div key={item.id} className={`flex items-center justify-between p-2.5 rounded-lg border transition-colors min-w-0 ${
+                    activeTranscriptionId === item.id 
+                      ? 'bg-amber-500/10 border-amber-500/40' 
+                      : 'bg-white/[0.02] border-white/10 hover:bg-white/[0.04]'
+                  }`}>
+                    <div className="flex flex-col min-w-0 flex-1 mr-3">
+                      <span className="text-xs font-semibold text-amber-400 truncate" title={item.filename}>
                         {item.filename}
                       </span>
-                      <span className="history-item-meta" style={{ fontSize: '0.6875rem', color: 'hsl(var(--text-muted))' }}>
+                      <span className="text-[11px] text-zinc-400">
                         {item.created_at?.substring(0, 16).replace('T', ' ')} ({item.word_count} palabras)
                       </span>
                     </div>
-                    <div className="history-item-actions" style={{ display: 'flex', gap: '0.25rem' }}>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
                       <button
                         type="button"
-                        className="history-action-btn load-btn"
                         onClick={() => onLoadTranscription && onLoadTranscription(item.id)}
-                        style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-glass)', color: '#fff', padding: '0.25rem 0.5rem', fontSize: '0.75rem', borderRadius: '0.25rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem' }}
+                        className="px-2.5 py-1 text-xs font-medium text-white bg-white/10 hover:bg-white/20 rounded-md border border-white/10 flex items-center gap-1 cursor-pointer transition-colors"
                       >
-                        <i className="fa-solid fa-folder-open"></i> Cargar
+                        <i className="fa-solid fa-folder-open text-amber-400"></i> Cargar
                       </button>
                       <button
                         type="button"
-                        className="history-action-btn delete-btn"
                         onClick={() => onDeleteTranscription && onDeleteTranscription(item.id, item.filename)}
-                        style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', color: '#ef4444', padding: '0.25rem 0.5rem', fontSize: '0.75rem', borderRadius: '0.25rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem' }}
+                        className="px-2.5 py-1 text-xs font-medium text-red-400 bg-red-500/10 hover:bg-red-500/20 rounded-md border border-red-500/20 flex items-center gap-1 cursor-pointer transition-colors"
                       >
-                        <i className="fa-solid fa-trash"></i> Borrar
+                        <i className="fa-solid fa-trash text-red-400"></i> Borrar
                       </button>
                     </div>
                   </div>

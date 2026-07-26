@@ -26,154 +26,192 @@ export default function Sidebar({ activeTab, setActiveTab, serverStatus, gpuName
   ];
 
   const allNavItems = [
-    { id: 'transcription-tab', label: 'Transcripción', icon: 'fa-microphone' },
-    { id: 'files-tab',         label: 'Archivos',      icon: 'fa-file-lines' },
+    { id: 'transcription-tab', label: 'Transcripción', icon: 'fa-solid fa-microphone' },
+    { id: 'files-tab',         label: 'Archivos',      icon: 'fa-solid fa-file-lines' },
     { id: 'youtube-tab',       label: 'YouTube',       icon: 'fa-brands fa-youtube', iconColor: '#ef4444' },
     { id: 'web-tab',           label: 'Páginas Web',   icon: 'fa-solid fa-globe', iconColor: '#38bdf8' },
-    { id: 'summary-tab',       label: 'Resúmenes',     icon: 'fa-file-invoice' },
-    { id: 'chat-tab',          label: 'Chat RAG',       icon: 'fa-comments' },
-    { id: 'search-tab',        label: 'Búsqueda',      icon: 'fa-magnifying-glass' },
-    { id: 'sources-tab',       label: 'Fuentes',        icon: 'fa-folder-open' },
+    { id: 'summary-tab',       label: 'Resúmenes',     icon: 'fa-solid fa-file-invoice' },
+    { id: 'chat-tab',          label: 'Chat RAG',      icon: 'fa-solid fa-comments' },
+    { id: 'search-tab',        label: 'Búsqueda',      icon: 'fa-solid fa-magnifying-glass' },
+    { id: 'sources-tab',       label: 'Fuentes',       icon: 'fa-solid fa-folder-open' },
   ];
 
   const isTaskRunning = Boolean(statusData?.is_running);
 
   return (
-    <aside className="sidebar">
-      <div className="brand">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <i className="fa-solid fa-brain brand-icon"></i>
-          <div className="brand-text">
-            <h1>SLM RAG</h1>
-            <span>Local AI Assistant</span>
+    <aside className="w-full lg:w-64 shrink-0 bg-[#0a0a0d] border-b lg:border-b-0 lg:border-r border-white/10 p-4 lg:p-5 flex flex-col justify-between">
+      <div>
+        {/* Row 1: Brand Header & Mobile Menu Button */}
+        <div className="flex items-center justify-between mb-3 lg:mb-6">
+          <div className="flex items-center gap-2.5">
+            <i className="fa-solid fa-brain text-2xl text-amber-500"></i>
+            <div>
+              <h1 className="text-lg font-semibold tracking-wide text-white leading-tight">SLM RAG</h1>
+              <span className="text-xs text-zinc-400 font-medium">Local AI Assistant</span>
+            </div>
           </div>
-        </div>
 
-        {/* Mobile Menu Toggle Button */}
-        <button
-          type="button"
-          className="mobile-menu-toggle"
-          onClick={() => setMobileMenuOpen(prev => !prev)}
-          aria-label="Abrir Menú"
-        >
-          <i className={`fa-solid ${mobileMenuOpen ? 'fa-xmark' : 'fa-bars'}`}></i>
-          <span>Navegación</span>
-        </button>
-      </div>
-
-      {/* Mobile Flat Nav Scrollbar */}
-      <div className="mobile-nav-bar">
-        {allNavItems.map(item => (
+          {/* Mobile Menu Toggle Button */}
           <button
-            key={item.id}
             type="button"
-            className={`mobile-nav-pill ${activeTab === item.id ? 'active' : ''}`}
-            onClick={() => { setActiveTab(item.id); setMobileMenuOpen(false); }}
+            className="lg:hidden flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-semibold hover:bg-amber-500/20 transition-colors"
+            onClick={() => setMobileMenuOpen(prev => !prev)}
+            aria-label="Abrir Menú"
           >
-            <i className={item.icon} style={item.iconColor ? { color: item.iconColor } : undefined}></i>
-            <span>{item.label}</span>
+            <i className={`fa-solid ${mobileMenuOpen ? 'fa-xmark' : 'fa-bars'}`}></i>
+            <span>Menú</span>
           </button>
-        ))}
-      </div>
-
-      {/* Desktop / Collapsible Mobile Menu */}
-      <nav className={`nav-menu ${mobileMenuOpen ? 'mobile-expanded' : ''}`}>
-        {/* ── Accordion: Ingestión ─────────────────────── */}
-        <div className="nav-group">
-          <button
-            className={`nav-group-header ${ingestionOpen ? 'open' : ''}`}
-            onClick={() => setIngestionOpen((prev) => !prev)}
-            aria-expanded={ingestionOpen}
-          >
-            <span className="nav-group-header-left">
-              <i className="fa-solid fa-layer-group"></i>
-              Ingestión
-            </span>
-            <i className={`fa-solid fa-chevron-down nav-group-chevron ${ingestionOpen ? 'open' : ''}`}></i>
-          </button>
-
-          <div className={`nav-group-children ${ingestionOpen ? 'open' : ''}`}>
-            <button
-              className={`nav-child-btn ${activeTab === 'transcription-tab' ? 'active' : ''}`}
-              onClick={() => { setActiveTab('transcription-tab'); setMobileMenuOpen(false); }}
-            >
-              <i className="fa-solid fa-microphone"></i>
-              Transcripción
-            </button>
-            <button
-              className={`nav-child-btn ${activeTab === 'files-tab' ? 'active' : ''}`}
-              onClick={() => { setActiveTab('files-tab'); setMobileMenuOpen(false); }}
-            >
-              <i className="fa-solid fa-file-lines"></i>
-              Archivos
-            </button>
-            <button
-              className={`nav-child-btn ${activeTab === 'youtube-tab' ? 'active' : ''}`}
-              onClick={() => { setActiveTab('youtube-tab'); setMobileMenuOpen(false); }}
-            >
-              <i className="fa-brands fa-youtube" style={{ color: '#ef4444' }}></i>
-              YouTube
-            </button>
-            <button
-              className={`nav-child-btn ${activeTab === 'web-tab' ? 'active' : ''}`}
-              onClick={() => { setActiveTab('web-tab'); setMobileMenuOpen(false); }}
-            >
-              <i className="fa-solid fa-globe" style={{ color: '#38bdf8' }}></i>
-              Páginas Web
-            </button>
-          </div>
         </div>
 
-        {/* ── Flat items ───────────────────────────────── */}
-        {flatItems.map((item) => (
-          <button
-            key={item.id}
-            className={`nav-btn ${activeTab === item.id ? 'active' : ''}`}
-            onClick={() => { setActiveTab(item.id); setMobileMenuOpen(false); }}
-          >
-            <i className={`fa-solid ${item.icon}`}></i>
-            <span>{item.label}</span>
-          </button>
-        ))}
-      </nav>
+        {/* Row 2: Mobile Horizontal Pill Navigation Bar */}
+        <div className="flex lg:hidden overflow-x-auto gap-2 py-1 mb-2 no-scrollbar">
+          {allNavItems.map(item => (
+            <button
+              key={item.id}
+              type="button"
+              className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                activeTab === item.id
+                  ? 'bg-amber-500 text-zinc-950 font-semibold border-amber-500 shadow-md shadow-amber-500/20'
+                  : 'bg-white/5 border-white/10 text-zinc-400 hover:text-white hover:bg-white/10'
+              }`}
+              onClick={() => { setActiveTab(item.id); setMobileMenuOpen(false); }}
+            >
+              <i className={item.icon} style={item.iconColor ? { color: item.iconColor } : undefined}></i>
+              <span>{item.label}</span>
+            </button>
+          ))}
+        </div>
 
-      {/* ── Live Reactive Server Status Card ────────────── */}
-      <div className="sidebar-status">
-        <div className="status-header">
-          <span style={{ fontWeight: 600 }}>Estado del Servidor</span>
+        {/* Desktop / Collapsible Mobile Navigation Menu */}
+        <nav className={`flex-col gap-1.5 ${mobileMenuOpen ? 'flex' : 'hidden lg:flex'}`}>
+          {/* Accordion: Ingestión */}
+          <div className="flex flex-col">
+            <button
+              type="button"
+              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium text-zinc-400 hover:text-white hover:bg-white/5 transition-colors ${
+                ingestionOpen ? 'text-white' : ''
+              }`}
+              onClick={() => setIngestionOpen((prev) => !prev)}
+              aria-expanded={ingestionOpen}
+            >
+              <span className="flex items-center gap-2.5">
+                <i className="fa-solid fa-layer-group text-amber-500"></i>
+                Ingestión
+              </span>
+              <i className={`fa-solid fa-chevron-down text-xs transition-transform duration-200 ${ingestionOpen ? 'rotate-180 text-amber-400' : 'opacity-50'}`}></i>
+            </button>
+
+            {ingestionOpen && (
+              <div className="flex flex-col gap-1 pl-4 pt-1 pb-1">
+                <button
+                  type="button"
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+                    activeTab === 'transcription-tab'
+                      ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 font-semibold'
+                      : 'text-zinc-400 hover:text-white hover:bg-white/5'
+                  }`}
+                  onClick={() => { setActiveTab('transcription-tab'); setMobileMenuOpen(false); }}
+                >
+                  <i className="fa-solid fa-microphone w-4 text-center"></i>
+                  Transcripción
+                </button>
+
+                <button
+                  type="button"
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+                    activeTab === 'files-tab'
+                      ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 font-semibold'
+                      : 'text-zinc-400 hover:text-white hover:bg-white/5'
+                  }`}
+                  onClick={() => { setActiveTab('files-tab'); setMobileMenuOpen(false); }}
+                >
+                  <i className="fa-solid fa-file-lines w-4 text-center"></i>
+                  Archivos
+                </button>
+
+                <button
+                  type="button"
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+                    activeTab === 'youtube-tab'
+                      ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 font-semibold'
+                      : 'text-zinc-400 hover:text-white hover:bg-white/5'
+                  }`}
+                  onClick={() => { setActiveTab('youtube-tab'); setMobileMenuOpen(false); }}
+                >
+                  <i className="fa-brands fa-youtube w-4 text-center text-red-500"></i>
+                  YouTube
+                </button>
+
+                <button
+                  type="button"
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+                    activeTab === 'web-tab'
+                      ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 font-semibold'
+                      : 'text-zinc-400 hover:text-white hover:bg-white/5'
+                  }`}
+                  onClick={() => { setActiveTab('web-tab'); setMobileMenuOpen(false); }}
+                >
+                  <i className="fa-solid fa-globe w-4 text-center text-sky-400"></i>
+                  Páginas Web
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Flat Navigation Items */}
+          {flatItems.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                activeTab === item.id
+                  ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 font-semibold'
+                  : 'text-zinc-400 hover:text-white hover:bg-white/5'
+              }`}
+              onClick={() => { setActiveTab(item.id); setMobileMenuOpen(false); }}
+            >
+              <i className={`fa-solid ${item.icon} w-4 text-center`}></i>
+              <span>{item.label}</span>
+            </button>
+          ))}
+        </nav>
+      </div>
+
+      {/* Live Server Status Card at Bottom */}
+      <div className="hidden lg:block mt-6 p-3.5 rounded-xl bg-white/[0.03] border border-white/10">
+        <div className="flex items-center justify-between text-xs font-semibold text-zinc-400 mb-2">
+          <span>Estado del Servidor</span>
           <span
-            className={`status-dot ${serverStatus ? (isTaskRunning ? 'processing' : 'online') : 'offline'}`}
+            className="w-2.5 h-2.5 rounded-full transition-all duration-300"
             style={{
-              width: '10px',
-              height: '10px',
-              borderRadius: '50%',
               backgroundColor: !serverStatus ? '#ef4444' : isTaskRunning ? '#6366f1' : '#10b981',
-              boxShadow: isTaskRunning ? '0 0 8px #6366f1' : 'none'
+              boxShadow: isTaskRunning ? '0 0 10px #6366f1' : serverStatus ? '0 0 8px #10b981' : 'none'
             }}
           ></span>
         </div>
 
-        {/* Live Stage Indicator */}
+        {/* Live Task Progress Banner */}
         {isTaskRunning && (
-          <div style={{ marginTop: '0.5rem', padding: '0.4rem 0.6rem', borderRadius: '0.375rem', background: 'rgba(99, 102, 241, 0.15)', border: '1px solid rgba(99, 102, 241, 0.3)' }}>
-            <div style={{ fontSize: '0.725rem', color: '#818cf8', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-              <i className="fa-solid fa-spinner fa-spin"></i> {statusData?.current_stage || 'Procesando...'}
+          <div className="mb-2 p-2 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-xs">
+            <div className="flex items-center gap-1.5 text-indigo-400 font-medium">
+              <i className="fa-solid fa-spinner fa-spin"></i>
+              <span>{statusData?.current_stage || 'Procesando...'}</span>
             </div>
             {statusData?.current_progress && (
-              <div style={{ fontSize: '0.6875rem', color: '#cbd5e1', marginTop: '0.2rem', wordBreak: 'break-word' }}>
+              <div className="text-[11px] text-zinc-300 mt-1 break-words">
                 {statusData.current_progress}
               </div>
             )}
           </div>
         )}
 
-        <div className="status-details" style={{ marginTop: '0.5rem' }}>
-          <p><i className="fa-solid fa-microchip"></i> GPU: <span>{gpuName || statusData?.device_name || 'CUDA GPU'}</span></p>
-          <p><i className="fa-solid fa-memory"></i> VRAM GPU: <span>{statusData?.vram_allocated_mb ? `${statusData.vram_allocated_mb} MB` : 'Calculando...'}</span></p>
-          <p><i className="fa-solid fa-network-wired"></i> LLM: <span>{llmModel || 'Gemma 4 12B'}</span></p>
+        <div className="flex flex-col gap-1 text-[11px] text-zinc-400">
+          <p><i className="fa-solid fa-microchip mr-1.5"></i> GPU: <span className="text-white font-medium">{gpuName || statusData?.device_name || 'CUDA GPU'}</span></p>
+          <p><i className="fa-solid fa-memory mr-1.5"></i> VRAM GPU: <span className="text-white font-medium">{statusData?.vram_allocated_mb ? `${statusData.vram_allocated_mb} MB` : 'Calculando...'}</span></p>
+          <p><i className="fa-solid fa-network-wired mr-1.5"></i> LLM: <span className="text-white font-medium">{llmModel || 'Gemma 4 12B'}</span></p>
           <p>
-            <i className="fa-solid fa-users-viewfinder"></i> Diarización:{' '}
-            <span style={{ color: hasHfToken ? '#10b981' : '#f59e0b' }}>
+            <i className="fa-solid fa-users-viewfinder mr-1.5"></i> Diarización:{' '}
+            <span className={`font-medium ${hasHfToken ? 'text-emerald-400' : 'text-amber-400'}`}>
               {hasHfToken ? 'Token en .env' : 'Requiere Token'}
             </span>
           </p>

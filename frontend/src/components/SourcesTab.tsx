@@ -115,11 +115,17 @@ export default function SourcesTab({ transcriptionList, onRefresh, active }: Sou
     });
   };
 
-  // Creation of Project
+  // Action: Open Create Project Modal
+  const openCreateProjectModal = () => {
+    setNewProjectName('');
+    setNewProjectDesc('');
+    setShowProjectModal(true);
+  };
+
+  // Submit Create Project
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newProjectName.trim()) return;
-
     try {
       const res = await fetch('/api/projects', {
         method: 'POST',
@@ -127,76 +133,46 @@ export default function SourcesTab({ transcriptionList, onRefresh, active }: Sou
         body: JSON.stringify({ name: newProjectName.trim(), description: newProjectDesc.trim() })
       });
       if (res.ok) {
-        setNewProjectName('');
-        setNewProjectDesc('');
         setShowProjectModal(false);
-        await fetchProjectsAndFolders();
+        fetchProjectsAndFolders();
       }
     } catch (err) {
-      console.error('Error creating project:', err);
+      console.error("Error creating project:", err);
     }
   };
 
-  // Creation of Folder
-  const openCreateFolderModal = (projectId: number, parentId: number | null = null) => {
+  // Action: Open Create Folder Modal
+  const openCreateFolderModal = (projectId: number, parentFolderId: number | null = null) => {
     setTargetProjectId(projectId);
-    setTargetParentFolderId(parentId);
+    setTargetParentFolderId(parentFolderId);
     setNewFolderName('');
     setShowFolderModal(true);
   };
 
+  // Submit Create Folder
   const handleCreateFolder = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newFolderName.trim() || !targetProjectId) return;
-
     try {
       const res = await fetch('/api/folders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          name: newFolderName.trim(),
           project_id: targetProjectId,
-          parent_id: targetParentFolderId,
-          name: newFolderName.trim()
+          parent_id: targetParentFolderId
         })
       });
       if (res.ok) {
-        setNewFolderName('');
         setShowFolderModal(false);
-        await fetchProjectsAndFolders();
+        fetchProjectsAndFolders();
       }
     } catch (err) {
-      console.error('Error creating folder:', err);
+      console.error("Error creating folder:", err);
     }
   };
 
-  // Deletion of Project / Folder
-  const handleDeleteProject = async (projectId: number) => {
-    if (!confirm('¿Estás seguro de que deseas eliminar este proyecto? Las fuentes no se borrarán, solo quedarán sin proyecto.')) return;
-    try {
-      const res = await fetch(`/api/projects/${projectId}`, { method: 'DELETE' });
-      if (res.ok) {
-        await fetchProjectsAndFolders();
-        if (onRefresh) await onRefresh();
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const handleDeleteFolder = async (folderId: number) => {
-    if (!confirm('¿Estás seguro de que deseas eliminar esta carpeta? Las fuentes no se borrarán, solo quedarán sueltas en el proyecto.')) return;
-    try {
-      const res = await fetch(`/api/folders/${folderId}`, { method: 'DELETE' });
-      if (res.ok) {
-        await fetchProjectsAndFolders();
-        if (onRefresh) await onRefresh();
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  // Move Source Modal
+  // Action: Move Single Source Modal
   const openMoveSourceModal = (source: Transcription) => {
     setMoveSourceTarget(source);
     setMoveBatchTargets(null);
@@ -204,211 +180,150 @@ export default function SourcesTab({ transcriptionList, onRefresh, active }: Sou
     setMoveSelectedFolderId(source.folder_id || '');
   };
 
-  const openMoveBatchModal = () => {
-    const ids = Array.from(selectedIds);
-    if (ids.length === 0) return;
-    setMoveBatchTargets(ids);
+  // Action: Move Selected Batch Sources Modal
+  const openMoveBatchSourcesModal = () => {
+    if (selectedIds.size === 0) return;
     setMoveSourceTarget(null);
+    setMoveBatchTargets(Array.from(selectedIds));
     setMoveSelectedProjectId('');
     setMoveSelectedFolderId('');
   };
 
+  // Execute Move Source (Single or Batch)
   const handleExecuteMoveSource = async () => {
-    const targetIds = moveBatchTargets ? moveBatchTargets : (moveSourceTarget ? [moveSourceTarget.id] : []);
-    if (targetIds.length === 0) return;
+    const idsToMove = moveBatchTargets ? moveBatchTargets : (moveSourceTarget ? [moveSourceTarget.id] : []);
+    if (idsToMove.length === 0) return;
 
     try {
-      for (const id of targetIds) {
-        await fetch(`/api/transcriptions/${id}/location`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            project_id: moveSelectedProjectId ? Number(moveSelectedProjectId) : null,
-            folder_id: moveSelectedFolderId ? Number(moveSelectedFolderId) : null
-          })
-        });
-      }
+      const res = await fetch('/api/transcriptions/move', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transcription_ids: idsToMove,
+          project_id: moveSelectedProjectId !== '' ? moveSelectedProjectId : null,
+          folder_id: moveSelectedFolderId !== '' ? moveSelectedFolderId : null
+        })
+      });
 
-      setMoveSourceTarget(null);
-      setMoveBatchTargets(null);
-      if (onRefresh) await onRefresh();
-    } catch (e) {
-      console.error('Error moving source(s):', e);
+      if (res.ok) {
+        setMoveSourceTarget(null);
+        setMoveBatchTargets(null);
+        if (onRefresh) await onRefresh();
+        await fetchProjectsAndFolders();
+      }
+    } catch (err) {
+      console.error("Error moving sources:", err);
     }
   };
 
+  // Delete Handlers with confirmation modal
   const promptDeleteSingle = (id: number, filename: string) => {
-    setDeleteConfirmTarget({
-      ids: [id],
-      label: `la fuente "${filename}"`
-    });
+    setDeleteConfirmTarget({ ids: [id], label: `"${filename}"` });
   };
 
   const promptDeleteSelected = () => {
-    const ids = Array.from(selectedIds);
-    if (ids.length === 0) return;
+    if (selectedIds.size === 0) return;
+    setDeleteConfirmTarget({ ids: Array.from(selectedIds), label: `${selectedIds.size} fuentes seleccionadas` });
+  };
+
+  const handleDeleteFolder = (folderId: number, folderName: string) => {
+    const folderSources = transcriptionList.filter(s => s.folder_id === folderId);
     setDeleteConfirmTarget({
-      ids,
-      label: `${ids.length} fuentes seleccionadas`
+      ids: folderSources.map(s => s.id),
+      label: `carpeta "${folderName}" y sus ${folderSources.length} fuentes`
+    });
+  };
+
+  const handleDeleteProject = (projectId: number, projectName: string) => {
+    const projectSources = transcriptionList.filter(s => s.project_id === projectId);
+    setDeleteConfirmTarget({
+      ids: projectSources.map(s => s.id),
+      label: `proyecto "${projectName}" y sus ${projectSources.length} fuentes`
     });
   };
 
   const executeConfirmDelete = async () => {
     if (!deleteConfirmTarget || deleteConfirmTarget.ids.length === 0) return;
-
     setIsDeleting(true);
-    const targetIds = deleteConfirmTarget.ids;
 
     try {
-      for (const id of targetIds) {
-        const res = await fetch(`/api/transcriptions/${id}/delete`, {
-          method: 'POST'
-        });
-        if (!res.ok) {
-          console.error(`Fallo al eliminar fuente con ID ${id}`);
-        }
-      }
-
-      setSelectedIds((prev) => {
-        const next = new Set(prev);
-        targetIds.forEach((id) => next.delete(id));
-        return next;
+      const res = await fetch('/api/transcriptions/delete-batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: deleteConfirmTarget.ids })
       });
 
-      if (onRefresh) {
-        await onRefresh();
+      if (res.ok) {
+        setSelectedIds(new Set());
+        setDeleteConfirmTarget(null);
+        if (onRefresh) await onRefresh();
+        await fetchProjectsAndFolders();
+      } else {
+        alert('Fallo al eliminar los elementos seleccionados.');
       }
-    } catch (err: any) {
+    } catch (err) {
       console.error(err);
-      alert(`Error al eliminar fuentes: ${err.message}`);
+      alert('Error al procesar la solicitud de eliminación.');
     } finally {
       setIsDeleting(false);
-      setDeleteConfirmTarget(null);
     }
-  };
-
-  const formatDate = (dateStr?: string) => {
-    if (!dateStr) return 'N/A';
-    try {
-      const dateObj = new Date(dateStr.replace(' ', 'T'));
-      return dateObj.toLocaleDateString('es-ES', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      });
-    } catch (e) {
-      return dateStr;
-    }
-  };
-
-  const getExtension = (name: string): string => {
-    const parts = name.split('.');
-    return parts.length > 1 ? parts[parts.length - 1].toLowerCase() : '';
-  };
-
-  const getSourceLocationLabel = (item: Transcription) => {
-    if (!item.project_id) return 'Fuentes Generales';
-    const proj = projects.find(p => p.id === item.project_id);
-    const folder = folders.find(f => f.id === item.folder_id);
-    const projName = proj ? proj.name : 'Proyecto';
-    if (folder) return `${projName} / ${folder.name}`;
-    return projName;
-  };
-
-  const renderOriginalViewer = () => {
-    if (!inspectSource) return null;
-    const ext = getExtension(inspectSource.filename);
-
-    if (ext === 'pdf') {
-      return (
-        <iframe
-          src={`/api/files/view/${inspectSource.id}`}
-          style={{ width: '100%', height: '550px', border: 'none', borderRadius: '0.5rem', background: '#fff' }}
-          title={inspectSource.filename}
-        />
-      );
-    }
-
-    if (['png', 'jpg', 'jpeg', 'webp', 'bmp'].includes(ext)) {
-      return (
-        <div style={{ textAlign: 'center', padding: '1rem', background: 'rgba(0,0,0,0.2)', borderRadius: '0.5rem' }}>
-          <img
-            src={`/api/files/view/${inspectSource.id}`}
-            alt={inspectSource.filename}
-            style={{ maxWidth: '100%', maxHeight: '550px', borderRadius: '0.375rem', objectFit: 'contain' }}
-          />
-        </div>
-      );
-    }
-
-    if (['mp3', 'wav', 'm4a', 'ogg', 'flac', 'aac'].includes(ext)) {
-      return (
-        <div style={{ padding: '2rem', textAlign: 'center', background: 'rgba(255,255,255,0.02)', borderRadius: '0.5rem' }}>
-          <i className="fa-solid fa-music" style={{ fontSize: '3rem', marginBottom: '1rem', color: 'hsl(var(--primary))' }}></i>
-          <p style={{ marginBottom: '1rem', fontWeight: 600 }}>{inspectSource.filename}</p>
-          <audio controls src={`/api/files/view/${inspectSource.id}`} style={{ width: '100%', maxWidth: '500px' }} />
-        </div>
-      );
-    }
-
-    if (['mp4', 'mkv', 'webm', 'avi', 'mov'].includes(ext)) {
-      return (
-        <div style={{ textAlign: 'center', background: '#000', borderRadius: '0.5rem', overflow: 'hidden' }}>
-          <video controls src={`/api/files/view/${inspectSource.id}`} style={{ width: '100%', maxHeight: '500px' }} />
-        </div>
-      );
-    }
-
-    if (['docx', 'pptx'].includes(ext)) {
-      return (
-        <div className="card glass-card" style={{ padding: '2rem', textAlign: 'center' }}>
-          <i className={`fa-solid ${ext === 'docx' ? 'fa-file-word' : 'fa-file-powerpoint'}`} style={{ fontSize: '4rem', color: 'hsl(var(--primary))', marginBottom: '1rem' }}></i>
-          <h3>{inspectSource.filename}</h3>
-          <p style={{ color: 'hsl(var(--text-muted))', margin: '1rem 0' }}>
-            Los documentos binarios Microsoft Word y PowerPoint no se pueden renderizar nativamente en el navegador. Puedes consultar el texto estructurado extraído por Docling en la pestaña <strong>"Texto Extraído"</strong> o descargar el archivo original a continuación:
-          </p>
-          <a
-            href={`/api/files/view/${inspectSource.id}`}
-            download={inspectSource.filename}
-            className="btn btn-primary"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', margin: '0 auto' }}
-          >
-            <i className="fa-solid fa-download"></i> Descargar Archivo Original (.{ext})
-          </a>
-        </div>
-      );
-    }
-
-    return (
-      <div style={{ background: 'rgba(0,0,0,0.3)', padding: '1rem', borderRadius: '0.5rem', maxHeight: '550px', overflowY: 'auto' }}>
-        <pre style={{ margin: 0, fontFamily: 'monospace', fontSize: '0.8125rem', whiteSpace: 'pre-wrap', color: '#e2e8f0' }}>
-          {extractedText || 'Cargando contenido del archivo...'}
-        </pre>
-      </div>
-    );
   };
 
   const isAllChecked = transcriptionList.length > 0 && selectedIds.size === transcriptionList.length;
 
+  const formatDate = (isoStr?: string) => {
+    if (!isoStr) return '-';
+    return isoStr.substring(0, 10);
+  };
+
+  const getSourceLocationLabel = (source: Transcription) => {
+    const proj = projects.find(p => p.id === source.project_id);
+    const fold = folders.find(f => f.id === source.folder_id);
+    if (proj && fold) return `${proj.name} / ${fold.name}`;
+    if (proj) return proj.name;
+    if (fold) return `Folder: ${fold.name}`;
+    return 'General (Sin Proyecto)';
+  };
+
+  const renderOriginalViewer = () => {
+    if (!inspectSource) return null;
+    const isMedia = inspectSource.source_type === 'audio' || inspectSource.source_type === 'video' || inspectSource.source_type === 'youtube';
+
+    return (
+      <div className="flex flex-col gap-4">
+        {isMedia && inspectSource.filepath && (
+          <div className="p-3 bg-black/40 rounded-lg border border-white/10">
+            <audio controls src={`/api/media?path=${encodeURIComponent(inspectSource.filepath)}`} className="w-full h-10" />
+          </div>
+        )}
+        <div className="p-4 bg-black/30 rounded-lg border border-white/10 font-mono text-xs text-zinc-300 space-y-1">
+          <p><span className="text-zinc-500">ID DB:</span> {inspectSource.id}</p>
+          <p><span className="text-zinc-500">Nombre:</span> {inspectSource.filename}</p>
+          <p><span className="text-zinc-500">Tipo de Fuente:</span> {inspectSource.source_type || 'Multimedia'}</p>
+          <p><span className="text-zinc-500">Ruta de Origen:</span> {inspectSource.filepath || 'N/A'}</p>
+          <p><span className="text-zinc-500">Total de Palabras:</span> {inspectSource.word_count || 0}</p>
+          <p><span className="text-zinc-500">Total Chunks Vectoriales:</span> {inspectSource.chunk_count || 0}</p>
+          <p><span className="text-zinc-500">Ubicación:</span> {getSourceLocationLabel(inspectSource)}</p>
+        </div>
+      </div>
+    );
+  };
+
   return (
-    <section id="sources-tab" className={`tab-panel ${active ? 'active' : ''}`}>
-      <div className="panel-header">
-        <h2>Gestión de Fuentes y Proyectos</h2>
-        <p>Organiza tus documentos y audios en Proyectos, Carpetas y Subcarpetas con inspección tridimensional.</p>
+    <section id="sources-tab" className={`flex-col gap-6 w-full ${active ? 'flex' : 'hidden'}`}>
+      <div className="mb-1">
+        <h2 className="text-2xl font-semibold text-white tracking-tight mb-1">Gestión de Fuentes RAG & Proyectos</h2>
+        <p className="text-sm text-zinc-400">Organiza tus audios, documentos e ingestas web en Proyectos y Carpetas con vista jerárquica.</p>
       </div>
 
-      {/* ── Main Sources Card ─────────────────────────── */}
-      <div className="card glass-card">
-        {/* Controls Toolbar */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+      <div className="p-5 sm:p-6 rounded-xl bg-[#17171c]/75 border border-white/10 backdrop-blur-md shadow-xl flex flex-col gap-4 w-full">
+        {/* Top Actions Bar */}
+        <div className="flex items-center justify-between flex-wrap gap-3 pb-4 border-b border-white/10">
+          <div className="flex items-center gap-2 flex-wrap">
             <button
               type="button"
-              className="submit-btn btn-sm"
-              onClick={() => setShowProjectModal(true)}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}
+              className="px-3.5 py-2 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/35 text-amber-400 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+              onClick={openCreateProjectModal}
             >
               <i className="fa-solid fa-folder-plus"></i> Nuevo Proyecto
             </button>
@@ -417,19 +332,17 @@ export default function SourcesTab({ transcriptionList, onRefresh, active }: Sou
               <>
                 <button
                   type="button"
-                  className="btn btn-sm btn-secondary"
-                  onClick={openMoveBatchModal}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}
+                  className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+                  onClick={openMoveBatchSourcesModal}
                 >
-                  <i className="fa-solid fa-folder-open" style={{ color: 'var(--primary)' }}></i> Mover Seleccionados ({selectedIds.size})
+                  <i className="fa-solid fa-folder-arrow-up text-amber-400"></i> Mover ({selectedIds.size})
                 </button>
 
                 <button
                   type="button"
-                  className="btn btn-sm btn-danger"
+                  className="px-3 py-2 rounded-lg bg-red-500/15 hover:bg-red-500/25 border border-red-500/30 text-red-400 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
                   disabled={isDeleting}
                   onClick={promptDeleteSelected}
-                  style={{ background: '#ef4444', color: '#fff', border: '1px solid #dc2626', display: 'inline-flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}
                 >
                   {isDeleting ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-trash"></i>}
                   Eliminar Seleccionados ({selectedIds.size})
@@ -439,17 +352,25 @@ export default function SourcesTab({ transcriptionList, onRefresh, active }: Sou
           </div>
 
           {/* View Mode Selector */}
-          <div className="tab-toggle" style={{ width: 'auto', padding: '0.25rem' }}>
+          <div className="grid grid-cols-2 gap-1 p-1 bg-black/40 border border-white/10 rounded-xl">
             <button
               type="button"
-              className={`toggle-btn ${viewMode === 'hierarchy' ? 'active' : ''}`}
+              className={`flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors cursor-pointer ${
+                viewMode === 'hierarchy'
+                  ? 'bg-amber-500/15 border border-amber-500/35 text-amber-400 font-semibold'
+                  : 'text-zinc-400 hover:text-white hover:bg-white/5 border border-transparent'
+              }`}
               onClick={() => setViewMode('hierarchy')}
             >
               <i className="fa-solid fa-sitemap"></i> Vista Jerárquica
             </button>
             <button
               type="button"
-              className={`toggle-btn ${viewMode === 'table' ? 'active' : ''}`}
+              className={`flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors cursor-pointer ${
+                viewMode === 'table'
+                  ? 'bg-amber-500/15 border border-amber-500/35 text-amber-400 font-semibold'
+                  : 'text-zinc-400 hover:text-white hover:bg-white/5 border border-transparent'
+              }`}
               onClick={() => setViewMode('table')}
             >
               <i className="fa-solid fa-table-list"></i> Vista Tabla
@@ -472,29 +393,26 @@ export default function SourcesTab({ transcriptionList, onRefresh, active }: Sou
             isManagementMode={true}
           />
         ) : (
-          /* View Mode 2: Classic Table with horizontal scroll */
-          <div className="table-responsive">
-            <table className="sources-table">
-              <thead>
+          /* View Mode 2: Classic Table */
+          <div className="w-full overflow-x-auto rounded-lg border border-white/10">
+            <table className="w-full min-w-[700px] text-left text-xs border-collapse">
+              <thead className="bg-black/40 text-zinc-400 font-semibold border-b border-white/10">
                 <tr>
-                  <th style={{ width: '40px' }}>
-                    <label className="checkbox-container">
-                      <input type="checkbox" checked={isAllChecked} onChange={handleToggleAll} />
-                      <span className="checkmark"></span>
-                    </label>
+                  <th className="p-3 w-10">
+                    <input type="checkbox" className="accent-amber-500 rounded" checked={isAllChecked} onChange={handleToggleAll} />
                   </th>
-                  <th>Nombre de Fuente</th>
-                  <th>Ubicación / Proyecto</th>
-                  <th>Fecha Ingestión</th>
-                  <th>Palabras</th>
-                  <th>Chunks</th>
-                  <th style={{ textAlign: 'right' }}>Acciones</th>
+                  <th className="p-3">Nombre de Fuente</th>
+                  <th className="p-3">Ubicación / Proyecto</th>
+                  <th className="p-3">Fecha Ingestión</th>
+                  <th className="p-3">Palabras</th>
+                  <th className="p-3">Chunks</th>
+                  <th className="p-3 text-right">Acciones</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-white/5">
                 {transcriptionList.length === 0 ? (
                   <tr>
-                    <td colSpan={7} style={{ textAlign: 'center', padding: '2rem', color: 'hsl(var(--text-muted))' }}>
+                    <td colSpan={7} className="text-center p-8 text-zinc-500">
                       No hay fuentes indexadas en el sistema.
                     </td>
                   </tr>
@@ -502,62 +420,56 @@ export default function SourcesTab({ transcriptionList, onRefresh, active }: Sou
                   transcriptionList.map((item) => {
                     const isChecked = selectedIds.has(item.id);
                     return (
-                      <tr key={item.id} style={{ background: isChecked ? 'rgba(99,102,241,0.05)' : 'transparent' }}>
-                        <td>
-                          <label className="checkbox-container">
-                            <input type="checkbox" checked={isChecked} onChange={() => handleToggleRow(item.id)} />
-                            <span className="checkmark"></span>
-                          </label>
+                      <tr key={item.id} className={`hover:bg-white/[0.03] transition-colors ${isChecked ? 'bg-indigo-500/10' : ''}`}>
+                        <td className="p-3">
+                          <input type="checkbox" className="accent-amber-500 rounded" checked={isChecked} onChange={() => handleToggleRow(item.id)} />
                         </td>
-                        <td style={{ fontWeight: 600 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                            <i className="fa-solid fa-file-audio" style={{ color: 'hsl(var(--primary))' }}></i>
+                        <td className="p-3 font-semibold text-white">
+                          <div className="flex items-center gap-2">
+                            <i className="fa-solid fa-file-audio text-amber-500"></i>
                             <span>{item.filename}</span>
                           </div>
                         </td>
-                        <td style={{ color: '#cbd5e1' }}>
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', background: 'rgba(255,255,255,0.04)', padding: '0.2rem 0.5rem', borderRadius: '0.25rem', border: '1px solid var(--border-glass)', fontSize: '0.75rem' }}>
-                            <i className="fa-solid fa-folder-open" style={{ color: '#a855f7' }}></i>
+                        <td className="p-3 text-zinc-300">
+                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-white/[0.04] border border-white/10 text-[11px]">
+                            <i className="fa-solid fa-folder-open text-purple-400"></i>
                             {getSourceLocationLabel(item)}
                           </span>
                         </td>
-                        <td style={{ color: 'hsl(var(--text-muted))' }}>
+                        <td className="p-3 text-zinc-400">
                           {formatDate(item.created_at)}
                         </td>
-                        <td>
+                        <td className="p-3 text-zinc-300">
                           {item.word_count || 0}
                         </td>
-                        <td>
-                          <span className="badge" style={{ background: 'rgba(245, 158, 11, 0.15)', color: 'var(--primary)' }}>
+                        <td className="p-3">
+                          <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-400 text-[11px] font-semibold border border-amber-500/30">
                             {item.chunk_count || 0} chunks
                           </span>
                         </td>
-                        <td style={{ textAlign: 'right' }}>
-                          <div style={{ display: 'flex', gap: '0.35rem', justifyContent: 'flex-end' }}>
+                        <td className="p-3 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
                             <button
                               type="button"
-                              className="btn btn-sm btn-secondary"
+                              className="px-2.5 py-1 text-xs text-white bg-white/10 hover:bg-white/15 rounded border border-white/10 flex items-center gap-1 cursor-pointer"
                               onClick={() => openMoveSourceModal(item)}
                               title="Mover a Proyecto/Carpeta"
-                              style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
                             >
                               <i className="fa-solid fa-folder"></i> Mover
                             </button>
                             <button
                               type="button"
-                              className="btn btn-sm btn-secondary"
+                              className="px-2.5 py-1 text-xs text-white bg-white/10 hover:bg-white/15 rounded border border-white/10 flex items-center gap-1 cursor-pointer"
                               onClick={() => handleOpenInspector(item)}
                               title="Inspeccionar tridimensionalmente"
-                              style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
                             >
                               <i className="fa-solid fa-eye"></i> Inspeccionar
                             </button>
                             <button
                               type="button"
-                              className="btn btn-sm"
+                              className="px-2.5 py-1 text-xs text-red-400 bg-red-500/10 hover:bg-red-500/20 rounded border border-red-500/20 flex items-center gap-1 cursor-pointer"
                               onClick={() => promptDeleteSingle(item.id, item.filename)}
                               title="Eliminar fuente"
-                              style={{ background: 'rgba(239, 68, 68, 0.15)', color: '#ef4444', border: '1px solid rgba(239, 68, 68, 0.3)', fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
                             >
                               <i className="fa-solid fa-trash"></i>
                             </button>
@@ -573,41 +485,39 @@ export default function SourcesTab({ transcriptionList, onRefresh, active }: Sou
         )}
       </div>
 
-      {/* ── Modal: Create Project (Portal) ────────────────────────────── */}
+      {/* Modal: Create Project */}
       {showProjectModal && createPortal(
-        <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1.5rem' }} onClick={() => setShowProjectModal(false)}>
-          <div className="card glass-card" style={{ width: '100%', maxWidth: '440px', padding: '1.75rem', border: '1px solid rgba(168,85,247,0.4)', boxShadow: '0 1rem 3rem rgba(0,0,0,0.5)' }} onClick={e => e.stopPropagation()}>
-            <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <i className="fa-solid fa-diagram-project" style={{ color: '#a855f7' }}></i> Nuevo Proyecto
+        <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowProjectModal(false)}>
+          <div className="p-6 rounded-2xl bg-[#17171c] border border-purple-500/40 shadow-2xl max-w-md w-full flex flex-col gap-4" onClick={e => e.stopPropagation()}>
+            <h3 className="text-base font-semibold text-white flex items-center gap-2">
+              <i className="fa-solid fa-diagram-project text-purple-400"></i> Nuevo Proyecto
             </h3>
-            <form onSubmit={handleCreateProject} style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1.25rem' }}>
-              <div>
-                <label className="form-label" style={{ display: 'block', marginBottom: '0.35rem', fontSize: '0.8125rem' }}>Nombre del Proyecto *</label>
+            <form onSubmit={handleCreateProject} className="flex flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-zinc-300">Nombre del Proyecto *</label>
                 <input
                   type="text"
-                  className="form-control"
+                  className="w-full bg-[#1e293b] border border-white/10 rounded-lg text-white p-2.5 text-xs focus:outline-none focus:border-amber-500"
                   placeholder="Ej. Investigación 2026"
                   value={newProjectName}
                   onChange={e => setNewProjectName(e.target.value)}
                   required
                   autoFocus
-                  style={{ width: '100%', padding: '0.625rem 0.75rem', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)', borderRadius: '0.375rem', color: '#fff' }}
                 />
               </div>
-              <div>
-                <label className="form-label" style={{ display: 'block', marginBottom: '0.35rem', fontSize: '0.8125rem' }}>Descripción (Opcional)</label>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-zinc-300">Descripción (Opcional)</label>
                 <textarea
-                  className="form-control"
                   rows={3}
+                  className="w-full bg-[#1e293b] border border-white/10 rounded-lg text-white p-2.5 text-xs focus:outline-none focus:border-amber-500"
                   placeholder="Detalles sobre este proyecto..."
                   value={newProjectDesc}
                   onChange={e => setNewProjectDesc(e.target.value)}
-                  style={{ width: '100%', padding: '0.625rem 0.75rem', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)', borderRadius: '0.375rem', color: '#fff' }}
                 />
               </div>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.5rem' }}>
-                <button type="button" className="btn btn-secondary" onClick={() => setShowProjectModal(false)}>Cancelar</button>
-                <button type="submit" className="btn btn-primary">Crear Proyecto</button>
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button type="button" className="px-3.5 py-2 rounded-lg bg-white/10 text-white text-xs font-medium cursor-pointer" onClick={() => setShowProjectModal(false)}>Cancelar</button>
+                <button type="submit" className="px-3.5 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 text-xs font-semibold cursor-pointer transition-colors">Crear Proyecto</button>
               </div>
             </form>
           </div>
@@ -615,30 +525,29 @@ export default function SourcesTab({ transcriptionList, onRefresh, active }: Sou
         document.body
       )}
 
-      {/* ── Modal: Create Folder / Subfolder (Portal) ─────────────────── */}
+      {/* Modal: Create Folder / Subfolder */}
       {showFolderModal && createPortal(
-        <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1.5rem' }} onClick={() => setShowFolderModal(false)}>
-          <div className="card glass-card" style={{ width: '100%', maxWidth: '440px', padding: '1.75rem', border: '1px solid rgba(56,189,248,0.4)', boxShadow: '0 1rem 3rem rgba(0,0,0,0.5)' }} onClick={e => e.stopPropagation()}>
-            <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <i className="fa-solid fa-folder-plus" style={{ color: '#38bdf8' }}></i> {targetParentFolderId ? 'Nueva Subcarpeta' : 'Nueva Carpeta'}
+        <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowFolderModal(false)}>
+          <div className="p-6 rounded-2xl bg-[#17171c] border border-sky-500/40 shadow-2xl max-w-md w-full flex flex-col gap-4" onClick={e => e.stopPropagation()}>
+            <h3 className="text-base font-semibold text-white flex items-center gap-2">
+              <i className="fa-solid fa-folder-plus text-sky-400"></i> {targetParentFolderId ? 'Nueva Subcarpeta' : 'Nueva Carpeta'}
             </h3>
-            <form onSubmit={handleCreateFolder} style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1.25rem' }}>
-              <div>
-                <label className="form-label" style={{ display: 'block', marginBottom: '0.35rem', fontSize: '0.8125rem' }}>Nombre de la Carpeta *</label>
+            <form onSubmit={handleCreateFolder} className="flex flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-zinc-300">Nombre de la Carpeta *</label>
                 <input
                   type="text"
-                  className="form-control"
+                  className="w-full bg-[#1e293b] border border-white/10 rounded-lg text-white p-2.5 text-xs focus:outline-none focus:border-amber-500"
                   placeholder="Ej. Entrevistas / Documentos"
                   value={newFolderName}
                   onChange={e => setNewFolderName(e.target.value)}
                   required
                   autoFocus
-                  style={{ width: '100%', padding: '0.625rem 0.75rem', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)', borderRadius: '0.375rem', color: '#fff' }}
                 />
               </div>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.5rem' }}>
-                <button type="button" className="btn btn-secondary" onClick={() => setShowFolderModal(false)}>Cancelar</button>
-                <button type="submit" className="btn btn-primary">Crear Carpeta</button>
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button type="button" className="px-3.5 py-2 rounded-lg bg-white/10 text-white text-xs font-medium cursor-pointer" onClick={() => setShowFolderModal(false)}>Cancelar</button>
+                <button type="submit" className="px-3.5 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 text-xs font-semibold cursor-pointer transition-colors">Crear Carpeta</button>
               </div>
             </form>
           </div>
@@ -646,27 +555,26 @@ export default function SourcesTab({ transcriptionList, onRefresh, active }: Sou
         document.body
       )}
 
-      {/* ── Modal: Move Source (Portal) ────────────────────────────────── */}
+      {/* Modal: Move Source */}
       {(moveSourceTarget || moveBatchTargets) && createPortal(
-        <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1.5rem' }} onClick={() => { setMoveSourceTarget(null); setMoveBatchTargets(null); }}>
-          <div className="card glass-card" style={{ width: '100%', maxWidth: '460px', padding: '1.75rem', border: '1px solid rgba(129,140,248,0.4)', boxShadow: '0 1rem 3rem rgba(0,0,0,0.5)' }} onClick={e => e.stopPropagation()}>
-            <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <i className="fa-solid fa-arrow-right-to-city" style={{ color: 'var(--primary)' }}></i> {moveBatchTargets ? `Mover ${moveBatchTargets.length} Fuentes` : 'Mover Fuente'}
+        <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => { setMoveSourceTarget(null); setMoveBatchTargets(null); }}>
+          <div className="p-6 rounded-2xl bg-[#17171c] border border-amber-500/40 shadow-2xl max-w-md w-full flex flex-col gap-4" onClick={e => e.stopPropagation()}>
+            <h3 className="text-base font-semibold text-white flex items-center gap-2">
+              <i className="fa-solid fa-arrow-right-to-city text-amber-500"></i> {moveBatchTargets ? `Mover ${moveBatchTargets.length} Fuentes` : 'Mover Fuente'}
             </h3>
-            <p style={{ fontSize: '0.85rem', color: '#cbd5e1', marginTop: '0.35rem' }}>
+            <p className="text-xs text-zinc-300 leading-relaxed">
               Selecciona el destino para: <strong>{moveBatchTargets ? `${moveBatchTargets.length} fuentes seleccionadas` : moveSourceTarget?.filename}</strong>
             </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1.25rem' }}>
-              <div>
-                <label className="form-label" style={{ display: 'block', marginBottom: '0.35rem', fontSize: '0.8125rem' }}>Proyecto Destino</label>
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-zinc-300">Proyecto Destino</label>
                 <select
-                  className="form-control"
+                  className="w-full bg-[#1e293b] border border-white/10 rounded-lg text-white p-2.5 text-xs"
                   value={moveSelectedProjectId}
                   onChange={e => {
                     setMoveSelectedProjectId(e.target.value ? Number(e.target.value) : '');
                     setMoveSelectedFolderId('');
                   }}
-                  style={{ width: '100%', padding: '0.625rem 0.75rem', background: 'rgba(20,24,38,0.95)', border: '1px solid var(--border-glass)', borderRadius: '0.375rem', color: '#fff' }}
                 >
                   <option value="">-- Sin Proyecto (Fuentes Generales) --</option>
                   {projects.map(p => (
@@ -676,13 +584,12 @@ export default function SourcesTab({ transcriptionList, onRefresh, active }: Sou
               </div>
 
               {moveSelectedProjectId !== '' && (
-                <div>
-                  <label className="form-label" style={{ display: 'block', marginBottom: '0.35rem', fontSize: '0.8125rem' }}>Carpeta Destino (Opcional)</label>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-zinc-300">Carpeta Destino (Opcional)</label>
                   <select
-                    className="form-control"
+                    className="w-full bg-[#1e293b] border border-white/10 rounded-lg text-white p-2.5 text-xs"
                     value={moveSelectedFolderId}
                     onChange={e => setMoveSelectedFolderId(e.target.value ? Number(e.target.value) : '')}
-                    style={{ width: '100%', padding: '0.625rem 0.75rem', background: 'rgba(20,24,38,0.95)', border: '1px solid var(--border-glass)', borderRadius: '0.375rem', color: '#fff' }}
                   >
                     <option value="">-- Raíz del Proyecto --</option>
                     {folders
@@ -694,9 +601,9 @@ export default function SourcesTab({ transcriptionList, onRefresh, active }: Sou
                 </div>
               )}
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.5rem' }}>
-                <button type="button" className="btn btn-secondary" onClick={() => { setMoveSourceTarget(null); setMoveBatchTargets(null); }}>Cancelar</button>
-                <button type="button" className="btn btn-primary" onClick={handleExecuteMoveSource}>Guardar Ubicación</button>
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button type="button" className="px-3.5 py-2 rounded-lg bg-white/10 text-white text-xs font-medium cursor-pointer" onClick={() => { setMoveSourceTarget(null); setMoveBatchTargets(null); }}>Cancelar</button>
+                <button type="button" className="px-3.5 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 text-xs font-semibold cursor-pointer transition-colors" onClick={handleExecuteMoveSource}>Guardar Ubicación</button>
               </div>
             </div>
           </div>
@@ -704,112 +611,86 @@ export default function SourcesTab({ transcriptionList, onRefresh, active }: Sou
         document.body
       )}
 
-      {/* ── 3D Source Inspector Modal (Portal) ─────────────────────────── */}
+      {/* 3D Source Inspector Modal */}
       {inspectSource && createPortal(
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 9999,
-            background: 'rgba(0,0,0,0.85)',
-            backdropFilter: 'blur(8px)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '1.5rem'
-          }}
-          onClick={() => setInspectSource(null)}
-        >
-          <div
-            className="card glass-card"
-            style={{
-              width: '100%',
-              maxWidth: '900px',
-              maxHeight: '90vh',
-              display: 'flex',
-              flexDirection: 'column',
-              padding: '1.5rem',
-              overflow: 'hidden'
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.75rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                <h3 style={{ margin: 0, fontSize: '1.1rem' }}>
-                  <i className="fa-solid fa-cube" style={{ color: 'hsl(var(--primary))', marginRight: '0.5rem' }}></i>
-                  {inspectSource.filename}
-                </h3>
-              </div>
-              <button
-                type="button"
-                className="btn btn-sm btn-secondary"
-                onClick={() => setInspectSource(null)}
-                style={{ fontSize: '1.1rem', padding: '0.25rem 0.6rem' }}
-              >
+        <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setInspectSource(null)}>
+          <div className="p-6 rounded-2xl bg-[#17171c] border border-white/10 shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col gap-4 overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between pb-2 border-b border-white/10">
+              <h3 className="text-base font-semibold text-white flex items-center gap-2">
+                <i className="fa-solid fa-cube text-amber-500"></i>
+                {inspectSource.filename}
+              </h3>
+              <button type="button" className="text-zinc-400 hover:text-white text-lg cursor-pointer" onClick={() => setInspectSource(null)}>
                 <i className="fa-solid fa-xmark"></i>
               </button>
             </div>
 
-            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.5rem' }}>
+            <div className="flex items-center gap-2 border-b border-white/10 pb-3 flex-wrap text-xs">
               <button
                 type="button"
-                className={`btn btn-sm ${inspectTab === 'original' ? 'btn-primary' : 'btn-secondary'}`}
+                className={`px-3 py-1.5 rounded-lg font-medium flex items-center gap-1.5 cursor-pointer transition-colors ${
+                  inspectTab === 'original' ? 'bg-amber-500 text-zinc-950 font-semibold' : 'bg-white/10 text-white hover:bg-white/15'
+                }`}
                 onClick={() => setInspectTab('original')}
               >
                 <i className="fa-solid fa-file"></i> 1. Archivo Original
               </button>
               <button
                 type="button"
-                className={`btn btn-sm ${inspectTab === 'extracted' ? 'btn-primary' : 'btn-secondary'}`}
+                className={`px-3 py-1.5 rounded-lg font-medium flex items-center gap-1.5 cursor-pointer transition-colors ${
+                  inspectTab === 'extracted' ? 'bg-amber-500 text-zinc-950 font-semibold' : 'bg-white/10 text-white hover:bg-white/15'
+                }`}
                 onClick={() => setInspectTab('extracted')}
               >
                 <i className="fa-solid fa-align-left"></i> 2. Texto Extraído (Docling / Whisper)
               </button>
               <button
                 type="button"
-                className={`btn btn-sm ${inspectTab === 'chunks' ? 'btn-primary' : 'btn-secondary'}`}
+                className={`px-3 py-1.5 rounded-lg font-medium flex items-center gap-1.5 cursor-pointer transition-colors ${
+                  inspectTab === 'chunks' ? 'bg-amber-500 text-zinc-950 font-semibold' : 'bg-white/10 text-white hover:bg-white/15'
+                }`}
                 onClick={() => setInspectTab('chunks')}
               >
                 <i className="fa-solid fa-puzzle-piece"></i> 3. Chunks Vectoriales ({chunksList.length})
               </button>
             </div>
 
-            <div style={{ flexGrow: 1, overflowY: 'auto', paddingRight: '0.5rem' }}>
+            <div className="flex-1 overflow-y-auto pr-1">
               {isLoadingDetails ? (
-                <div style={{ textAlign: 'center', padding: '3rem' }}>
-                  <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: '2rem', color: 'hsl(var(--primary))', marginBottom: '1rem' }}></i>
-                  <p>Cargando inspección tridimensional...</p>
+                <div className="text-center py-12">
+                  <i className="fa-solid fa-spinner fa-spin text-3xl text-amber-500 mb-3 block"></i>
+                  <p className="text-xs text-zinc-400">Cargando inspección tridimensional...</p>
                 </div>
               ) : (
                 <>
                   {inspectTab === 'original' && renderOriginalViewer()}
 
                   {inspectTab === 'extracted' && (
-                    <div style={{ background: 'rgba(0,0,0,0.3)', padding: '1rem', borderRadius: '0.5rem', maxHeight: '550px', overflowY: 'auto' }}>
-                      <pre style={{ margin: 0, fontFamily: 'monospace', fontSize: '0.875rem', whiteSpace: 'pre-wrap', color: '#e2e8f0', lineHeight: 1.6 }}>
+                    <div className="p-4 bg-black/40 rounded-xl border border-white/10 max-h-[500px] overflow-y-auto">
+                      <pre className="font-mono text-xs text-zinc-200 whitespace-pre-wrap leading-relaxed">
                         {extractedText || 'No hay texto disponible.'}
                       </pre>
                     </div>
                   )}
 
                   {inspectTab === 'chunks' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                    <div className="flex flex-col gap-3">
                       {chunksList.length > 0 ? (
                         chunksList.map((c) => (
-                          <div key={c.id} style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid var(--border-glass)', borderRadius: '0.5rem', padding: '0.875rem' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', fontSize: '0.75rem', color: 'var(--accent-light)', fontWeight: 600 }}>
+                          <div key={c.id} className="p-3.5 rounded-xl bg-white/[0.02] border border-white/10 text-xs">
+                            <div className="flex items-center justify-between text-amber-400 font-semibold mb-1">
                               <span><i className="fa-solid fa-hashtag"></i> Chunk #{c.chunk_index} (ID DB: {c.id})</span>
-                              <span><i className="fa-solid fa-font"></i> {c.char_count} caracteres</span>
+                              <span className="text-zinc-400 font-mono text-[11px]"><i className="fa-solid fa-font"></i> {c.char_count} caracteres</span>
                             </div>
-                            <div style={{ fontSize: '0.8125rem', lineHeight: 1.5, color: '#cbd5e1', whiteSpace: 'pre-wrap' }}>
+                            <div className="text-zinc-300 leading-relaxed whitespace-pre-wrap font-sans">
                               "{c.text}"
                             </div>
                           </div>
                         ))
                       ) : (
-                        <div style={{ textAlign: 'center', padding: '2rem', color: 'hsl(var(--text-muted))' }}>
-                          <i className="fa-solid fa-puzzle-piece" style={{ fontSize: '2.5rem', marginBottom: '0.75rem', opacity: 0.3, display: 'block' }}></i>
-                          <p>No se encontraron fragmentos vectoriales almacenados para esta fuente.</p>
+                        <div className="text-center py-12 text-zinc-500">
+                          <i className="fa-solid fa-puzzle-piece text-3xl mb-2 opacity-40 block"></i>
+                          <p className="text-xs">No se encontraron fragmentos vectoriales almacenados para esta fuente.</p>
                         </div>
                       )}
                     </div>
@@ -822,55 +703,29 @@ export default function SourcesTab({ transcriptionList, onRefresh, active }: Sou
         document.body
       )}
 
-      {/* Delete Confirmation Modal (Portal) */}
+      {/* Delete Confirmation Modal */}
       {deleteConfirmTarget && createPortal(
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 9999,
-            background: 'rgba(0,0,0,0.85)',
-            backdropFilter: 'blur(8px)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '1.5rem'
-          }}
-          onClick={() => setDeleteConfirmTarget(null)}
-        >
-          <div
-            className="card glass-card"
-            style={{
-              width: '100%',
-              maxWidth: '480px',
-              padding: '1.75rem',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '1.25rem',
-              border: '1px solid rgba(239, 68, 68, 0.4)',
-              boxShadow: '0 1rem 3rem rgba(239, 68, 68, 0.2)'
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-              <div style={{ width: '42px', height: '42px', borderRadius: '50%', backgroundColor: 'rgba(239, 68, 68, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <i className="fa-solid fa-triangle-exclamation" style={{ color: '#ef4444', fontSize: '1.3rem' }}></i>
+        <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setDeleteConfirmTarget(null)}>
+          <div className="p-6 rounded-2xl bg-[#17171c] border border-red-500/40 shadow-2xl max-w-md w-full flex flex-col gap-4" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-red-500/20 border border-red-500/30 flex items-center justify-center text-red-400 text-lg shrink-0">
+                <i className="fa-solid fa-triangle-exclamation"></i>
               </div>
-              <h3 style={{ margin: 0, fontSize: '1.15rem', color: '#f8fafc' }}>
+              <h3 className="text-base font-semibold text-white">
                 Confirmar Eliminación
               </h3>
             </div>
 
-            <p style={{ margin: 0, fontSize: '0.9rem', color: '#cbd5e1', lineHeight: '1.5' }}>
+            <p className="text-xs text-zinc-300 leading-relaxed">
               ¿Estás seguro de que deseas eliminar permanentemente <strong>{deleteConfirmTarget.label}</strong>?
               <br /><br />
-              Esta acción borrará la transcripción, fragmentos vectoriales (embeddings), resúmenes e historial de chat asociados de la base de datos local.
+              Esta acción borrará la transcripción, fragmentos vectoriales (embeddings), resúmenes e historial de chat asociados.
             </p>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.5rem' }}>
+            <div className="flex items-center justify-end gap-3 pt-2">
               <button
                 type="button"
-                className="btn btn-secondary"
+                className="px-3.5 py-2 rounded-lg bg-white/10 text-white text-xs font-medium cursor-pointer"
                 disabled={isDeleting}
                 onClick={() => setDeleteConfirmTarget(null)}
               >
@@ -878,10 +733,9 @@ export default function SourcesTab({ transcriptionList, onRefresh, active }: Sou
               </button>
               <button
                 type="button"
-                className="btn"
+                className="px-3.5 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white font-semibold text-xs flex items-center gap-1.5 cursor-pointer transition-colors"
                 disabled={isDeleting}
                 onClick={executeConfirmDelete}
-                style={{ backgroundColor: '#dc2626', color: '#fff', display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}
               >
                 {isDeleting ? (
                   <><i className="fa-solid fa-spinner fa-spin"></i> Eliminando...</>
