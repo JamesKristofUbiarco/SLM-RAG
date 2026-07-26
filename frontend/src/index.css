@@ -1,25 +1,31 @@
-/* CSS variables definition - Modern Dark Mode + Glassmorphic Palette */
+/* CSS variables definition - Warm Charcoal & Amber Gold Palette (Non-Generic) */
 :root {
-    --bg-base: 224, 25%, 8%;
-    --bg-sidebar: 224, 25%, 6%;
-    --bg-card: 224, 20%, 12%;
+    --bg-base: 240, 10%, 6%;         /* #0e0e11 - Deep Charcoal Void */
+    --bg-sidebar: 240, 10%, 4%;      /* #0a0a0d - Darker Sidebar */
+    --bg-card: 240, 9%, 10%;         /* #17171c - Rich Zinc Card */
+    --bg-card-hover: 240, 9%, 14%;   /* #202027 - Card Hover */
     
-    --primary: 190, 90%, 50%; /* Electric Cyan */
-    --secondary: 270, 85%, 60%; /* Violet Accent */
-    --accent: 140, 85%, 45%; /* Safe green */
+    --primary: 38, 92%, 50%;         /* #f59e0b - Warm Amber Gold */
+    --secondary: 35, 95%, 45%;       /* #d97706 - Darker Bronze Accent */
+    --accent: 152, 76%, 40%;         /* #10b981 - Muted Emerald Green */
     
-    --text-main: 220, 15%, 90%;
-    --text-muted: 220, 10%, 65%;
+    --text-main: 240, 6%, 92%;       /* #e4e4e7 - Warm Silver */
+    --text-muted: 240, 4%, 65%;      /* #94a3b8 - Muted Slate */
     
-    --font-heading: 'Outfit', sans-serif;
-    --font-body: 'Inter', sans-serif;
+    --font-heading: 'Inter', system-ui, sans-serif;
+    --font-body: 'Inter', system-ui, sans-serif;
     
-    --border-glass: rgba(255, 255, 255, 0.06);
-    --bg-glass: rgba(20, 24, 38, 0.65);
+    --border-glass: rgba(255, 255, 255, 0.07);
+    --border-amber: rgba(245, 158, 11, 0.3);
+    --bg-glass: rgba(23, 23, 28, 0.75);
     
-    --shadow-soft: 0 0.5rem 2rem 0 rgba(0, 0, 0, 0.5);
-    --border-radius: 0.75rem; /* 12px */
-    --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    --shadow-soft: 0 0.5rem 2rem 0 rgba(0, 0, 0, 0.6);
+    --border-radius: 0.625rem;       /* 10px */
+    --transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    
+    /* Anti-Cramped Spacing & Button Tokens */
+    --btn-padding: 0.625rem 1.25rem; /* 10px 20px - Generous padding */
+    --btn-height: 38px;
 }
 
 /* Reset and Base Styles */
@@ -444,11 +450,11 @@ select.form-control option {
 }
 
 .toggle-btn.active {
-    background: linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(168, 85, 247, 0.2));
-    border: 1px solid rgba(168, 85, 247, 0.4);
-    color: #ffffff;
+    background: rgba(245, 158, 11, 0.12);
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    color: #f59e0b;
     font-weight: 600;
-    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.15);
+    box-shadow: 0 4px 12px rgba(245, 158, 11, 0.15);
 }
 
 /* Drag and Drop Zone */
@@ -596,26 +602,27 @@ select.form-control option {
 /* Submit Button */
 .submit-btn {
     background: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--secondary)));
-    border: none;
-    border-radius: 0.5rem;
-    color: #000;
-    padding: 0.75rem;
-    font-family: var(--font-heading);
+    border: 1px solid rgba(245, 158, 11, 0.4);
+    border-radius: var(--border-radius);
+    color: #0e0e11;
+    padding: var(--btn-padding);
+    min-height: var(--btn-height);
+    font-family: var(--font-body);
     font-size: 0.9375rem; /* 15px */
-    font-weight: 700;
+    font-weight: 600;
     cursor: pointer;
     display: flex;
     justify-content: center;
     align-items: center;
     gap: 0.625rem; /* 10px */
     transition: var(--transition);
-    box-shadow: 0 0.25rem 0.9375rem rgba(0, 0, 0, 0.2);
+    box-shadow: 0 4px 14px rgba(245, 158, 11, 0.2);
 }
 
 .submit-btn:hover {
     filter: brightness(1.1);
-    transform: translateY(-0.125rem);
-    box-shadow: 0 0.375rem 1.25rem rgba(0, 0, 0, 0.3);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 18px rgba(245, 158, 11, 0.3);
 }
 
 /* Status Cards & Progress Bar */
