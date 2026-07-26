@@ -1,5 +1,6 @@
 import React, { useState, ChangeEvent, FormEvent } from 'react';
-import { StatusData } from '../types';
+import { StatusData, Transcription } from '../types';
+import TranscriptionHistoryBox from './TranscriptionHistoryBox';
 
 export interface YouTubeVideoInfo {
   title: string;
@@ -19,6 +20,10 @@ interface YouTubeTabProps {
   stopPollingStatus: () => void;
   hasHfToken?: boolean;
   onRedirectToTranscriptionPath: (path: string) => void;
+  transcriptionList?: Transcription[];
+  activeTranscriptionId?: number | null;
+  onLoadTranscription?: (id: number) => void;
+  onDeleteTranscription?: (id: number, filename: string) => void;
 }
 
 export default function YouTubeTab({
@@ -28,7 +33,11 @@ export default function YouTubeTab({
   startPollingStatus,
   stopPollingStatus,
   hasHfToken = false,
-  onRedirectToTranscriptionPath
+  onRedirectToTranscriptionPath,
+  transcriptionList = [],
+  activeTranscriptionId,
+  onLoadTranscription,
+  onDeleteTranscription
 }: YouTubeTabProps) {
   const [inputMode, setInputMode] = useState<'single' | 'batch'>('single');
   const [youtubeUrl, setYoutubeUrl] = useState<string>('');
@@ -503,59 +512,69 @@ export default function YouTubeTab({
           )}
         </div>
 
-        {/* Right Status Panel */}
-        <div className="p-5 sm:p-6 rounded-xl bg-[#17171c]/75 border border-white/10 backdrop-blur-md shadow-xl flex flex-col gap-4 w-full min-w-0">
-          <h3 className="text-lg font-semibold text-white">Estado del Servidor CUDA & YouTube</h3>
-          {statusData ? (
-            <div className="flex flex-col gap-3">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className={`px-2.5 py-1 rounded-md text-xs font-semibold uppercase tracking-wider ${
-                  statusData.is_running ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30' : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                }`}>
-                  {String(statusData.status || (statusData.is_running ? 'PROCESANDO' : 'LISTO')).toUpperCase()}
-                </span>
-                <span className="px-2.5 py-1 rounded-md text-xs font-semibold uppercase tracking-wider bg-amber-500/20 text-amber-400 border border-amber-500/30">
-                  {String(statusData.backend || statusData.transcribe_device || 'CUDA GPU').toUpperCase()}
-                </span>
-              </div>
-
-              {/* Stage indicator */}
-              {statusData.is_running && statusData.current_stage && statusData.current_stage !== 'Idle' ? (
-                <div className="text-xs text-indigo-400 font-semibold flex items-center gap-1.5">
-                  <i className="fa-solid fa-microchip"></i> Etapa: {statusData.current_stage}
+        {/* Right Status Panel & History Box */}
+        <div className="flex flex-col gap-6 w-full min-w-0">
+          <div className="p-5 sm:p-6 rounded-xl bg-[#17171c]/75 border border-white/10 backdrop-blur-md shadow-xl flex flex-col gap-4 w-full min-w-0">
+            <h3 className="text-lg font-semibold text-white">Estado del Servidor CUDA & YouTube</h3>
+            {statusData ? (
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={`px-2.5 py-1 rounded-md text-xs font-semibold uppercase tracking-wider ${
+                    statusData.is_running ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30' : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                  }`}>
+                    {String(statusData.status || (statusData.is_running ? 'PROCESANDO' : 'LISTO')).toUpperCase()}
+                  </span>
+                  <span className="px-2.5 py-1 rounded-md text-xs font-semibold uppercase tracking-wider bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                    {String(statusData.backend || statusData.transcribe_device || 'CUDA GPU').toUpperCase()}
+                  </span>
                 </div>
-              ) : (
-                <div className="text-xs text-emerald-400 font-medium flex items-center gap-1.5">
-                  <i className="fa-solid fa-circle-check"></i> Servidor listo (Sin tareas en ejecución)
-                </div>
-              )}
 
-              {/* Live Progress Bar */}
-              {statusData.is_running && (
-                <div className="flex flex-col gap-1.5 my-1">
-                  <div className="flex justify-between text-xs text-zinc-300">
-                    <span>Progreso del Audio Actual</span>
-                    <span className="font-semibold text-amber-400">{statusData.current_progress || (statusData.progress ? `${statusData.progress}%` : 'En curso...')}</span>
+                {/* Stage indicator */}
+                {statusData.is_running && statusData.current_stage && statusData.current_stage !== 'Idle' ? (
+                  <div className="text-xs text-indigo-400 font-semibold flex items-center gap-1.5">
+                    <i className="fa-solid fa-microchip"></i> Etapa: {statusData.current_stage}
                   </div>
-                  <div className="w-full bg-white/10 rounded-full h-2 overflow-hidden">
-                    <div className="bg-amber-500 h-full transition-all duration-300" style={{ width: `${statusData.progress || 100}%` }}></div>
-                  </div>
-                </div>
-              )}
-
-              <div className="p-3 rounded-lg bg-black/40 border border-white/10 text-xs font-mono max-h-36 overflow-y-auto space-y-1">
-                {statusData.logs && statusData.logs.length > 0 ? (
-                  statusData.logs.map((log, i) => <div key={i} className="text-zinc-300 leading-relaxed">{log}</div>)
-                ) : statusData.is_running && statusData.current_progress ? (
-                  <div className="text-zinc-400">{statusData.current_progress}</div>
                 ) : (
-                  <div className="text-zinc-500">No hay procesos activos en segundo plano.</div>
+                  <div className="text-xs text-emerald-400 font-medium flex items-center gap-1.5">
+                    <i className="fa-solid fa-circle-check"></i> Servidor listo (Sin tareas en ejecución)
+                  </div>
                 )}
+
+                {/* Live Progress Bar */}
+                {statusData.is_running && (
+                  <div className="flex flex-col gap-1.5 my-1">
+                    <div className="flex justify-between text-xs text-zinc-300">
+                      <span>Progreso del Audio Actual</span>
+                      <span className="font-semibold text-amber-400">{statusData.current_progress || (statusData.progress ? `${statusData.progress}%` : 'En curso...')}</span>
+                    </div>
+                    <div className="w-full bg-white/10 rounded-full h-2 overflow-hidden">
+                      <div className="bg-amber-500 h-full transition-all duration-300" style={{ width: `${statusData.progress || 100}%` }}></div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="p-3 rounded-lg bg-black/40 border border-white/10 text-xs font-mono max-h-36 overflow-y-auto space-y-1">
+                  {statusData.logs && statusData.logs.length > 0 ? (
+                    statusData.logs.map((log, i) => <div key={i} className="text-zinc-300 leading-relaxed">{log}</div>)
+                  ) : statusData.is_running && statusData.current_progress ? (
+                    <div className="text-zinc-400">{statusData.current_progress}</div>
+                  ) : (
+                    <div className="text-zinc-500">No hay procesos activos en segundo plano.</div>
+                  )}
+                </div>
               </div>
-            </div>
-          ) : (
-            <p className="text-xs text-zinc-400">No hay tarea en ejecución en este momento.</p>
-          )}
+            ) : (
+              <p className="text-xs text-zinc-400">No hay tarea en ejecución en este momento.</p>
+            )}
+          </div>
+
+          {/* Historial de Grabaciones */}
+          <TranscriptionHistoryBox
+            transcriptionList={transcriptionList}
+            activeTranscriptionId={activeTranscriptionId}
+            onLoadTranscription={onLoadTranscription}
+            onDeleteTranscription={onDeleteTranscription}
+          />
         </div>
       </div>
     </section>

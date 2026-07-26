@@ -161,7 +161,7 @@ export default function App() {
   }, []);
 
   return (
-    <div className="flex flex-col lg:flex-row min-h-screen w-full bg-[#0e0e11] text-[#e4e4e7] overflow-x-hidden">
+    <div className="flex flex-col lg:flex-row h-screen w-full bg-[#0e0e11] text-[#e4e4e7] overflow-hidden">
       <Sidebar 
         activeTab={activeTab} 
         setActiveTab={setActiveTab} 
@@ -172,7 +172,7 @@ export default function App() {
         statusData={statusData}
       />
       
-      <main className="flex-1 min-w-0 p-4 sm:p-6 lg:p-10 overflow-y-auto overflow-x-hidden">
+      <main className="flex-1 min-w-0 lg:ml-64 p-4 sm:p-6 lg:p-10 overflow-y-auto flex flex-col">
         <TranscribeTab 
           onTranscriptionSuccess={(newId) => {
             loadTranscriptions();
@@ -251,6 +251,13 @@ export default function App() {
             setPendingTranscribePath(path);
             setActiveTab('transcription-tab');
           }}
+          transcriptionList={transcriptionList}
+          activeTranscriptionId={activeTranscriptionId}
+          onLoadTranscription={(id) => {
+            setActiveTranscriptionId(id);
+            setActiveTab('transcription-tab');
+          }}
+          onDeleteTranscription={handleDeleteTranscription}
         />
 
         <WebTab

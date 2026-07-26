@@ -373,7 +373,17 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
       });
 
       const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || 'Error al procesar consulta de Chat RAG.');
+      if (!response.ok) {
+        let errStr = 'Error al procesar consulta de Chat RAG.';
+        if (typeof data.detail === 'string') {
+          errStr = data.detail;
+        } else if (Array.isArray(data.detail)) {
+          errStr = data.detail.map((d: any) => d.msg || JSON.stringify(d)).join(', ');
+        } else if (data.detail) {
+          errStr = JSON.stringify(data.detail);
+        }
+        throw new Error(errStr);
+      }
 
       if (data.session_id && !activeSessionId) {
         setActiveSessionId(data.session_id);
@@ -382,7 +392,7 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
 
       const assistantMsg: Message = {
         role: 'assistant',
-        content: data.answer || 'Sin respuesta generada.',
+        content: data.response || data.answer || 'Sin respuesta generada.',
         sources: data.sources || [],
         web_sources: data.web_sources || [],
         search_logs: data.search_logs || []
@@ -390,9 +400,10 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
 
       setMessages(prev => [...prev, assistantMsg]);
     } catch (err: any) {
+      const errMsg = typeof err === 'string' ? err : (err.message || 'Error desconocido');
       setMessages(prev => [
         ...prev,
-        { role: 'assistant', content: `❌ Error de RAG: ${err.message}` }
+        { role: 'assistant', content: `❌ Error de RAG: ${errMsg}` }
       ]);
     } finally {
       setIsTyping(false);
@@ -414,7 +425,7 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
   const activeSessionObj = sessions.find(s => s.id === activeSessionId);
 
   return (
-    <section id="chat-tab" className={`flex-col gap-6 w-full ${active ? 'flex' : 'hidden'}`}>
+    <section id="chat-tab" className={`flex-col gap-6 w-full ${active ? 'flex' : 'hidden'} lg:h-full lg:overflow-hidden`}>
       {/* Top Header */}
       <div className="flex items-center justify-between flex-wrap gap-4 mb-1">
         <div>
@@ -581,14 +592,14 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
       )}
 
       {/* Main Layout Grid */}
-      <div className={`grid gap-6 items-start w-full min-w-0 ${
+      <div className={`grid gap-6 items-stretch flex-1 min-h-0 w-full min-w-0 ${
         (showSelectorCard && searchMode !== 'web') ? 'grid-cols-1 lg:grid-cols-[320px_1fr]' : 'grid-cols-1'
       }`}>
         
         {/* Left Side: Multi-Source Selector Panel */}
         {showSelectorCard && searchMode !== 'web' && (
-          <div className="flex flex-col gap-4 w-full">
-            <div className="p-4 sm:p-5 rounded-xl bg-[#17171c]/75 border border-white/10 backdrop-blur-md shadow-xl flex flex-col h-[560px]">
+          <div className="flex flex-col gap-4 w-full min-h-0 lg:h-full">
+            <div className="p-4 sm:p-5 rounded-xl bg-[#17171c]/75 border border-white/10 backdrop-blur-md shadow-xl flex flex-col h-[560px] lg:h-full overflow-hidden">
               <div className="flex items-center justify-between mb-3 pb-2 border-b border-white/10">
                 <h3 className="text-sm font-semibold text-white flex items-center gap-2">
                   <i className="fa-solid fa-layer-group text-amber-500"></i>
@@ -623,8 +634,8 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
         )}
 
         {/* Right Side: Chat Container */}
-        <div className="flex flex-col gap-3 w-full min-w-0">
-          <div className="rounded-xl bg-[#17171c]/75 border border-white/10 backdrop-blur-md shadow-xl flex flex-col h-[560px] overflow-hidden" id="chat-container-card">
+        <div className="flex flex-col gap-3 w-full min-w-0 min-h-0 lg:h-full">
+          <div className="rounded-xl bg-[#17171c]/75 border border-white/10 backdrop-blur-md shadow-xl flex flex-col h-[560px] lg:h-full overflow-hidden" id="chat-container-card">
             
             {/* Active Session & Search Mode Badge Bar */}
             <div className="px-4 py-2.5 bg-amber-500/5 border-b border-white/10 flex items-center justify-between text-xs flex-wrap gap-2">

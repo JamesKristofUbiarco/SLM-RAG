@@ -1,8 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Marked } from 'marked';
 import { Transcription } from '../types';
+import { isAudioVideoTranscription } from './TranscriptionHistoryBox';
 
 const marked = new Marked();
+
+type SummaryMode = 'meeting' | 'essay' | 'doc_executive' | 'doc_analysis' | 'web_digest';
 
 interface SummaryTabProps {
   transcriptionList: Transcription[];
@@ -14,12 +17,15 @@ interface SummaryTabProps {
 export default function SummaryTab({ transcriptionList, activeId, setActiveId, active }: SummaryTabProps) {
   const [selectedId, setSelectedId] = useState<number | ''>(activeId || '');
   const [summaryData, setSummaryData] = useState<Transcription | null>(null);
-  const [summaryMode, setSummaryMode] = useState<'meeting' | 'essay'>('meeting');
+  const [summaryMode, setSummaryMode] = useState<SummaryMode>('meeting');
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const selectedItem = transcriptionList.find((item) => item.id === selectedId);
+  const isMedia = selectedItem ? isAudioVideoTranscription(selectedItem) : false;
 
   // Sync selectedId with activeId from parent
   useEffect(() => {
@@ -27,6 +33,22 @@ export default function SummaryTab({ transcriptionList, activeId, setActiveId, a
       setSelectedId(activeId);
     }
   }, [activeId]);
+
+  // Adjust default summary mode based on content type
+  useEffect(() => {
+    if (selectedItem) {
+      if (isMedia) {
+        if (summaryMode !== 'meeting' && summaryMode !== 'essay') {
+          setSummaryMode('meeting');
+        }
+      } else {
+        if (summaryMode !== 'doc_executive' && summaryMode !== 'doc_analysis' && summaryMode !== 'web_digest') {
+          const isWeb = selectedItem.filename?.startsWith('web_');
+          setSummaryMode(isWeb ? 'web_digest' : 'doc_executive');
+        }
+      }
+    }
+  }, [selectedId, isMedia]);
 
   // Load summary details when selectedId changes
   useEffect(() => {
@@ -49,8 +71,8 @@ export default function SummaryTab({ transcriptionList, activeId, setActiveId, a
       const data: Transcription = await res.json();
       
       setSummaryData(data);
-      if (data.summary_mode && (data.summary_mode === 'meeting' || data.summary_mode === 'essay')) {
-        setSummaryMode(data.summary_mode as 'meeting' | 'essay');
+      if (data.summary_mode) {
+        setSummaryMode(data.summary_mode as SummaryMode);
       }
       setIsGenerating(data.is_generating || false);
 
@@ -140,16 +162,29 @@ export default function SummaryTab({ transcriptionList, activeId, setActiveId, a
     }
   };
 
+  const getModeLabel = (mode: SummaryMode): string => {
+    switch (mode) {
+      case 'meeting': return 'Modo Reunión (Minuta)';
+      case 'essay': return 'Modo Video Ensayo (Marcas de Tiempo)';
+      case 'doc_executive': return 'Síntesis Ejecutiva de Documento';
+      case 'doc_analysis': return 'Análisis Técnico de Documento';
+      case 'web_digest': return 'Resumen Digest Web';
+      default: return 'Resumen Inteligente';
+    }
+  };
+
   return (
     <section id="summary-tab" className={`flex-col gap-6 w-full ${active ? 'flex' : 'hidden'}`}>
       <div className="mb-1">
         <h2 className="text-2xl font-semibold text-white tracking-tight mb-1">Resúmenes Inteligentes</h2>
-        <p className="text-sm text-zinc-400">Genera resúmenes estructurados (Modo Reunión o Video Ensayo / Conferencia con marcas de tiempo) usando Gemma 4 local.</p>
+        <p className="text-sm text-zinc-400">
+          Genera resúmenes estructurados adaptados al tipo de contenido (Reunión o Video Ensayo para contenido multimedia; Síntesis Ejecutiva, Análisis Técnico o Digest Web para documentos).
+        </p>
       </div>
 
       <div className="p-5 sm:p-6 rounded-xl bg-[#17171c]/75 border border-white/10 backdrop-blur-md shadow-xl flex flex-col gap-3 w-full mb-2">
         <label htmlFor="history-summary-select" className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
-          <i className="fa-solid fa-history text-amber-500"></i> Seleccionar Grabación:
+          <i className="fa-solid fa-history text-amber-500"></i> Seleccionar Fuente o Grabación:
         </label>
         <select
           id="history-summary-select"
@@ -161,7 +196,7 @@ export default function SummaryTab({ transcriptionList, activeId, setActiveId, a
             if (setActiveId && typeof val === 'number') setActiveId(val);
           }}
         >
-          <option value="">-- Elige un archivo del historial --</option>
+          <option value="">-- Elige un archivo o fuente ingerida --</option>
           {transcriptionList.map((item) => (
             <option key={item.id} value={item.id}>
               {item.filename} ({item.created_at?.substring(0, 10)})
@@ -179,7 +214,7 @@ export default function SummaryTab({ transcriptionList, activeId, setActiveId, a
         <div className="p-5 sm:p-6 rounded-xl bg-[#17171c]/75 border border-white/10 backdrop-blur-md shadow-xl flex flex-col gap-4 w-full">
           <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-white/10">
             <h3 className="text-lg font-semibold text-white break-all">
-              {summaryData?.filename || 'Archivo de Audio'}
+              {summaryData?.filename || 'Archivo de Fuente'}
             </h3>
 
             {/* Controls Bar */}
@@ -187,12 +222,22 @@ export default function SummaryTab({ transcriptionList, activeId, setActiveId, a
               <select
                 className="bg-[#1e293b] border border-white/10 rounded-lg text-white px-3 py-2 text-xs font-medium focus:outline-none focus:border-amber-500 transition-colors"
                 value={summaryMode}
-                onChange={(e) => setSummaryMode(e.target.value as 'meeting' | 'essay')}
+                onChange={(e) => setSummaryMode(e.target.value as SummaryMode)}
                 disabled={isGenerating}
                 title="Selecciona el modo de resumen"
               >
-                <option value="meeting">📋 Modo Reunión / Minuta</option>
-                <option value="essay">📺 Modo Video Ensayo / Conferencia</option>
+                {isMedia ? (
+                  <>
+                    <option value="meeting">📋 Modo Reunión / Minuta</option>
+                    <option value="essay">📺 Modo Video Ensayo / Conferencia (Tiempos)</option>
+                  </>
+                ) : (
+                  <>
+                    <option value="doc_executive">📄 Síntesis Ejecutiva de Documento</option>
+                    <option value="doc_analysis">🔬 Análisis Técnico y Desglose</option>
+                    <option value="web_digest">🌐 Resumen Digest / Contenido Web</option>
+                  </>
+                )}
               </select>
 
               {summaryData?.summary && !isGenerating && (
@@ -207,8 +252,8 @@ export default function SummaryTab({ transcriptionList, activeId, setActiveId, a
             </div>
           </div>
 
-          {/* Audio Player Card */}
-          {summaryData && (
+          {/* Audio Player Card (Only for audio/video media files) */}
+          {summaryData && isMedia && (
             <div className="p-3.5 rounded-lg bg-white/[0.02] border border-white/10 flex flex-col gap-2">
               <div className="flex items-center justify-between text-xs text-zinc-400">
                 <span className="flex items-center gap-1.5">
@@ -232,12 +277,10 @@ export default function SummaryTab({ transcriptionList, activeId, setActiveId, a
               </div>
               <div>
                 <h4 className="text-base font-semibold text-amber-400 mb-1">
-                  Generando resumen en {summaryMode === 'essay' ? 'Modo Video Ensayo (Índice de Tiempos)' : 'Modo Reunión (Minuta)'}...
+                  Generando resumen en {getModeLabel(summaryMode)}...
                 </h4>
                 <p className="text-xs text-zinc-400 max-w-md mx-auto">
-                  {summaryMode === 'essay' 
-                    ? 'El modelo Gemma 4 está analizando la transcripción para extraer los capítulos por marcas de tiempo y el resumen por sección.'
-                    : 'El modelo Gemma 4 está analizando la transcripción para redactar el resumen ejecutivo, la participación de locutores y los compromisos.'}
+                  El modelo Gemma 4 está analizando el contenido de la fuente seleccionada para estructurar la síntesis solicitada.
                 </p>
               </div>
             </div>
@@ -255,7 +298,7 @@ export default function SummaryTab({ transcriptionList, activeId, setActiveId, a
                   El resumen aún no se ha generado
                 </h3>
                 <p className="text-xs text-zinc-400 max-w-md mx-auto mb-4">
-                  Elige el modo deseado (<strong>Reunión</strong> o <strong>Video Ensayo con marcas de tiempo</strong>) y haz clic en el botón para iniciar.
+                  Elige el modo deseado para este tipo de contenido ({isMedia ? 'Reunión o Video Ensayo' : 'Síntesis Ejecutiva, Análisis Técnico o Digest Web'}) y haz clic en el botón para iniciar.
                 </p>
               </div>
 
@@ -263,10 +306,20 @@ export default function SummaryTab({ transcriptionList, activeId, setActiveId, a
                 <select
                   className="bg-[#1e293b] border border-white/10 rounded-lg text-white px-3 py-2 text-xs font-medium focus:outline-none focus:border-amber-500 transition-colors"
                   value={summaryMode}
-                  onChange={(e) => setSummaryMode(e.target.value as 'meeting' | 'essay')}
+                  onChange={(e) => setSummaryMode(e.target.value as SummaryMode)}
                 >
-                  <option value="meeting">📋 Modo Reunión / Minuta</option>
-                  <option value="essay">📺 Modo Video Ensayo / Conferencia</option>
+                  {isMedia ? (
+                    <>
+                      <option value="meeting">📋 Modo Reunión / Minuta</option>
+                      <option value="essay">📺 Modo Video Ensayo / Conferencia (Tiempos)</option>
+                    </>
+                  ) : (
+                    <>
+                      <option value="doc_executive">📄 Síntesis Ejecutiva de Documento</option>
+                      <option value="doc_analysis">🔬 Análisis Técnico y Desglose</option>
+                      <option value="web_digest">🌐 Resumen Digest / Contenido Web</option>
+                    </>
+                  )}
                 </select>
 
                 <button 
@@ -283,7 +336,7 @@ export default function SummaryTab({ transcriptionList, activeId, setActiveId, a
       ) : (
         <div className="p-12 text-center rounded-xl bg-[#17171c]/75 border border-white/10" id="summary-empty-state">
           <i className="fa-solid fa-file-invoice text-4xl text-zinc-600 mb-3 block"></i>
-          <p className="text-xs text-zinc-400">Selecciona una transcripción del historial para ver su resumen ejecutivo o generar uno nuevo.</p>
+          <p className="text-xs text-zinc-400">Selecciona una fuente del historial para ver su resumen o generar uno nuevo.</p>
         </div>
       )}
     </section>

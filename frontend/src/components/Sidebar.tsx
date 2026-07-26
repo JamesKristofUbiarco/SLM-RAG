@@ -39,7 +39,7 @@ export default function Sidebar({ activeTab, setActiveTab, serverStatus, gpuName
   const isTaskRunning = Boolean(statusData?.is_running);
 
   return (
-    <aside className="w-full lg:w-64 shrink-0 bg-[#0a0a0d] border-b lg:border-b-0 lg:border-r border-white/10 p-4 lg:p-5 flex flex-col justify-between">
+    <aside className="w-full lg:w-64 shrink-0 bg-[#0a0a0d] border-b lg:border-b-0 lg:border-r border-white/10 p-4 lg:p-5 lg:pb-6 lg:fixed lg:top-0 lg:left-0 lg:bottom-0 lg:h-screen flex flex-col justify-between overflow-y-auto z-30">
       <div>
         {/* Row 1: Brand Header & Mobile Menu Button */}
         <div className="flex items-center justify-between mb-3 lg:mb-6">
@@ -178,7 +178,8 @@ export default function Sidebar({ activeTab, setActiveTab, serverStatus, gpuName
       </div>
 
       {/* Live Server Status Card at Bottom */}
-      <div className="hidden lg:block mt-6 p-3.5 rounded-xl bg-white/[0.03] border border-white/10">
+      <div className="hidden lg:block mt-auto pt-4 pb-1 shrink-0">
+        <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 shadow-lg">
         <div className="flex items-center justify-between text-xs font-semibold text-zinc-400 mb-2">
           <span>Estado del Servidor</span>
           <span
@@ -217,6 +218,7 @@ export default function Sidebar({ activeTab, setActiveTab, serverStatus, gpuName
           </p>
         </div>
       </div>
-    </aside>
+    </div>
+  </aside>
   );
 }

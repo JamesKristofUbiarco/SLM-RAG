@@ -364,6 +364,108 @@ Transcripción:
 
         return self.call_ollama_generate(prompt)
 
+    def generate_doc_executive_summary(self, title: str, text: str) -> str:
+        """
+        Generate an Executive Document Synthesis for PDFs, DOCX, TXT, MD files.
+        """
+        words = text.split()
+        context_window = settings.ollama_context_length
+        max_transcript_words = int((context_window - 4000) / 1.5)
+        max_transcript_words = max(max_transcript_words, 2500)
+
+        if len(words) > max_transcript_words:
+            step = (len(words) // max_transcript_words) + 1
+            text = " ".join(words[::step])
+
+        prompt = f"""Analiza detenidamente el siguiente documento o archivo '{title}'.
+Genera una **Síntesis Ejecutiva de Documento** profesional y completa en Markdown con la siguiente estructura:
+
+# 📄 Síntesis Ejecutiva: {title}
+
+## 🎯 Objetivo General y Propósito
+Resumen claro y directo sobre el propósito central, contexto y meta del documento.
+
+## 📌 Hallazgos y Puntos Clave
+Lista detallada y numerada con los hallazgos, propuestas o ideas principales desarrolladas en el texto.
+
+## 💡 Implicaciones y Conclusiones
+Conclusiones clave, recomendaciones o pasos a seguir derivados del documento.
+
+Documento:
+{text}"""
+        print(f"Generating Executive Document Summary for '{title}'...")
+        return self.call_ollama_generate(prompt)
+
+    def generate_doc_analysis_summary(self, title: str, text: str) -> str:
+        """
+        Generate a Deep Technical Analysis and Section Breakdown.
+        """
+        words = text.split()
+        context_window = settings.ollama_context_length
+        max_transcript_words = int((context_window - 4000) / 1.5)
+        max_transcript_words = max(max_transcript_words, 2500)
+
+        if len(words) > max_transcript_words:
+            step = (len(words) // max_transcript_words) + 1
+            text = " ".join(words[::step])
+
+        prompt = f"""Realiza un **Análisis Técnico y Desglose Estructurado** del documento '{title}'.
+Responde siguiendo ESTRICTAMENTE esta estructura en Markdown:
+
+# 🔬 Análisis Técnico y Desglose: {title}
+
+## 🔍 Resumen del Contenido
+Una visión analítica sobre los temas técnicos o metodológicos tratados.
+
+## 🧩 Desglose por Secciones o Bloques
+Estructura el documento por sus secciones principales con breves explicaciones de cada una:
+- **Sección / Tema 1**: Explicación y aspectos clave.
+- **Sección / Tema 2**: Explicación y aspectos clave.
+
+## 📊 Conceptos, Datos y Términos Clave
+Extrae definiciones, cifras, métricas o términos técnicos relevantes.
+
+Documento:
+{text}"""
+        print(f"Generating Technical Analysis Summary for '{title}'...")
+        return self.call_ollama_generate(prompt)
+
+    def generate_web_digest_summary(self, title: str, text: str) -> str:
+        """
+        Generate a Web Article Digest summary.
+        """
+        words = text.split()
+        context_window = settings.ollama_context_length
+        max_transcript_words = int((context_window - 4000) / 1.5)
+        max_transcript_words = max(max_transcript_words, 2500)
+
+        if len(words) > max_transcript_words:
+            step = (len(words) // max_transcript_words) + 1
+            text = " ".join(words[::step])
+
+        prompt = f"""Analiza la siguiente página web o artículo ingerido '{title}'.
+Crea un **Resumen Digest Web** ágil y estructurado en Markdown con el siguiente formato:
+
+# 🌐 Resumen Digest Web: {title}
+
+## ⚡ Idea Central en una Frase
+Una oración contundente que resuma el núcleo de la publicación.
+
+## 📰 Resumen del Artículo / Contenido
+Explicación clara de la tesis del autor, contexto y antecedentes expuestos.
+
+## 🔑 5 Puntos Clave de Lectura Rápida (Takeaways)
+1. Punto clave 1
+2. Punto clave 2
+3. Punto clave 3
+4. Punto clave 4
+5. Punto clave 5
+
+Contenido Web:
+{text}"""
+        print(f"Generating Web Digest Summary for '{title}'...")
+        return self.call_ollama_generate(prompt)
+
     def query_llm(self, query: str, context: str, history: List[Dict[str, str]] = None) -> str:
         """Call Ollama chat API injecting retrieved RAG context and rolling conversation history."""
         import datetime

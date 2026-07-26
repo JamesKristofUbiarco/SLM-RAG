@@ -1,6 +1,7 @@
 import React, { useState, useRef, ChangeEvent, FormEvent, DragEvent } from 'react';
 import { StatusData, Transcription } from '../types';
 import TranscriptionViewer from './TranscriptionViewer';
+import TranscriptionHistoryBox from './TranscriptionHistoryBox';
 
 export interface TranscribeQueueItem {
   id: string;
@@ -701,56 +702,12 @@ export default function TranscribeTab({
           </div>
 
           {/* Historial de Grabaciones */}
-          <div className="p-5 sm:p-6 rounded-xl bg-[#17171c]/75 border border-white/10 backdrop-blur-md shadow-xl flex flex-col gap-3 w-full min-w-0">
-            <div>
-              <h3 className="text-lg font-semibold text-white">Historial de Grabaciones</h3>
-              <p className="text-xs text-zinc-400 mt-0.5">
-                Carga o elimina grabaciones previamente procesadas.
-              </p>
-            </div>
-
-            <div className="flex flex-col gap-2 max-h-60 overflow-y-auto pr-1">
-              {transcriptionList.length === 0 ? (
-                <div className="text-xs text-zinc-500 text-center py-6">
-                  Ninguna grabación guardada.
-                </div>
-              ) : (
-                transcriptionList.map((item) => (
-                  <div key={item.id} className={`flex items-center justify-between p-2.5 rounded-lg border transition-colors min-w-0 ${
-                    activeTranscriptionId === item.id 
-                      ? 'bg-amber-500/10 border-amber-500/40' 
-                      : 'bg-white/[0.02] border-white/10 hover:bg-white/[0.04]'
-                  }`}>
-                    <div className="flex flex-col min-w-0 flex-1 mr-3">
-                      <span className="text-xs font-semibold text-amber-400 truncate" title={item.filename}>
-                        {item.filename}
-                      </span>
-                      <span className="text-[11px] text-zinc-400">
-                        {item.created_at?.substring(0, 16).replace('T', ' ')} ({item.word_count} palabras)
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => onLoadTranscription && onLoadTranscription(item.id)}
-                        className="px-2.5 py-1 text-xs font-medium text-white bg-white/10 hover:bg-white/20 rounded-md border border-white/10 flex items-center gap-1 cursor-pointer transition-colors"
-                      >
-                        <i className="fa-solid fa-folder-open text-amber-400"></i> Cargar
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onDeleteTranscription && onDeleteTranscription(item.id, item.filename)}
-                        className="px-2.5 py-1 text-xs font-medium text-red-400 bg-red-500/10 hover:bg-red-500/20 rounded-md border border-red-500/20 flex items-center gap-1 cursor-pointer transition-colors"
-                      >
-                        <i className="fa-solid fa-trash text-red-400"></i> Borrar
-                      </button>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
+          <TranscriptionHistoryBox
+            transcriptionList={transcriptionList}
+            activeTranscriptionId={activeTranscriptionId}
+            onLoadTranscription={onLoadTranscription}
+            onDeleteTranscription={onDeleteTranscription}
+          />
 
           {/* Inline Transcription Viewer */}
           <TranscriptionViewer

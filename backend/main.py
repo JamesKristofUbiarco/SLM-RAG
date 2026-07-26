@@ -86,8 +86,17 @@ def process_summary_background(transcription_id: int, filename: str, text: str, 
         if mode == "essay":
             # Mode "essay": Video Essay / Conference / Podcast timestamped summary
             summary_text = rag_service.generate_essay_summary(filename, segments, text)
+        elif mode == "doc_executive":
+            # Mode "doc_executive": Executive synthesis for document files
+            summary_text = rag_service.generate_doc_executive_summary(filename, text)
+        elif mode == "doc_analysis":
+            # Mode "doc_analysis": Technical breakdown for document files
+            summary_text = rag_service.generate_doc_analysis_summary(filename, text)
+        elif mode == "web_digest":
+            # Mode "web_digest": Fast digest for web articles/pages
+            summary_text = rag_service.generate_web_digest_summary(filename, text)
         else:
-            # Mode "meeting": Executive summary + Speakers + Commitments
+            # Mode "meeting": Executive summary + Speakers + Commitments for meetings
             summary_text = rag_service.generate_summary(filename, text)
             if segments:
                 speaker_analysis = rag_service.generate_speaker_analysis(filename, segments)
@@ -1483,30 +1492,40 @@ async def promote_web_source(payload: PromoteWebSourcePayload):
         "message": f"Fuente web '{parsed_data['title']}' guardada permanentemente en el proyecto."
     }
 
+class ChatPayload(BaseModel):
+    session_id: Optional[str] = None
+    transcription_id: Optional[int] = None
+    transcription_ids: Optional[str] = None
+    source_ids: Optional[List[int]] = None
+    message: Optional[str] = None
+    query: Optional[str] = None
+    search_mode: Optional[str] = "local"
+    search_depth: Optional[str] = "quick"
+    time_filter: Optional[str] = None
+    domain_filter: Optional[str] = None
+    similarity_threshold: Optional[float] = 0.50
+
 @app.post("/api/chat")
-async def chat_interaction(
-    session_id: Optional[str] = Form(None),
-    transcription_id: Optional[int] = Form(None),
-    transcription_ids: Optional[str] = Form(None),
-    message: str = Form(...),
-    search_mode: Optional[str] = Form("local"),
-    search_depth: Optional[str] = Form("quick"),
-    time_filter: Optional[str] = Form(None),
-    domain_filter: Optional[str] = Form(None),
-    similarity_threshold: Optional[float] = Form(0.50)
-):
+async def chat_interaction(payload: ChatPayload):
     """
     RAG-powered multi-source & agentic web search chat endpoint.
     Combines local SQLite document RAG with real-time ephemeral Web Search RAG (Docling + Guardrails),
     enforces strict anti-hallucination grounding, and registers session chat history.
     """
-    target_ids = []
-    if transcription_ids:
-        target_ids = [int(x.strip()) for x in transcription_ids.split(",") if x.strip().isdigit()]
-    elif transcription_id is not None:
-        target_ids = [transcription_id]
+    session_id = payload.session_id
+    message_str = (payload.message or payload.query or "").strip()
+    if not message_str:
+        raise HTTPException(status_code=400, detail="El mensaje de consulta no puede estar vacío.")
 
-    mode = search_mode or "local"
+    target_ids = []
+    if payload.source_ids:
+        target_ids = payload.source_ids
+    elif payload.transcription_ids:
+        target_ids = [int(x.strip()) for x in payload.transcription_ids.split(",") if x.strip().isdigit()]
+    elif payload.transcription_id is not None:
+        target_ids = [payload.transcription_id]
+
+    mode = payload.search_mode or "local"
     sources_key = ",".join(map(str, sorted(target_ids))) if target_ids else "no_sources"
 
     # Ensure active session_id exists or create one automatically
@@ -1519,8 +1538,7 @@ async def chat_interaction(
 
         if not active_session_id:
             active_session_id = f"session_{uuid.uuid4().hex[:12]}"
-            clean_msg = message.strip()
-            title = f"{clean_msg[:35]}..." if len(clean_msg) > 35 else clean_msg
+            title = f"{message_str[:35]}..." if len(message_str) > 35 else message_str
             if not title:
                 title = f"Conversación {datetime.datetime.now().strftime('%d/%m %H:%M')}"
             conn.execute(
@@ -1532,11 +1550,11 @@ async def chat_interaction(
             conn.execute("UPDATE chat_sessions SET context_sources = ? WHERE id = ?", (sources_key, active_session_id))
             conn.commit()
 
-    logger.info(f"Chat interaction [{mode}] for session [{active_session_id}]: '{message}'")
+    logger.info(f"Chat interaction [{mode}] for session [{active_session_id}]: '{message_str}'")
 
     local_context = ""
     if mode in ["local", "hybrid"] and target_ids:
-        local_context = rag_service.get_context(message, target_ids, top_k=6)
+        local_context = rag_service.get_context(message_str, target_ids, top_k=6)
 
     web_context = ""
     web_sources = []
@@ -1546,11 +1564,11 @@ async def chat_interaction(
         import web_search_service
         web_res = await run_in_threadpool(
             web_search_service.process_web_search_rag,
-            query=message,
-            search_depth=search_depth or "quick",
-            time_filter=time_filter,
-            domain_filter=domain_filter,
-            similarity_threshold=similarity_threshold or 0.50
+            query=message_str,
+            search_depth=payload.search_depth or "quick",
+            time_filter=payload.time_filter,
+            domain_filter=payload.domain_filter,
+            similarity_threshold=payload.similarity_threshold or 0.50
         )
         web_context = web_res.get("context_text", "")
         web_sources = web_res.get("web_sources", [])
@@ -1580,7 +1598,7 @@ async def chat_interaction(
     logger.info(f"Querying local model {settings.llm_model}...")
     llm_response = await run_in_threadpool(
         rag_service.query_llm,
-        query=message,
+        query=message_str,
         context=full_context,
         history=history
     )
@@ -1590,7 +1608,7 @@ async def chat_interaction(
     with get_db() as conn:
         conn.execute(
             "INSERT INTO chat_history (transcription_id, role, text, context_sources, session_id) VALUES (?, ?, ?, ?, ?)",
-            (first_target_id, "user", message, sources_key, active_session_id)
+            (first_target_id, "user", message_str, sources_key, active_session_id)
         )
         conn.execute(
             "INSERT INTO chat_history (transcription_id, role, text, context_sources, session_id) VALUES (?, ?, ?, ?, ?)",
@@ -1601,6 +1619,7 @@ async def chat_interaction(
     return {
         "session_id": active_session_id,
         "response": llm_response,
+        "answer": llm_response,
         "context_sources": local_context.split("\n\n---\n\n") if local_context else [],
         "web_sources": web_sources,
         "search_logs": search_logs
