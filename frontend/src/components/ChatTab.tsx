@@ -541,29 +541,29 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
           className={`toggle-btn ${searchMode === 'local' ? 'active' : ''}`}
           onClick={() => setSearchMode('local')}
         >
-          <i className="fa-solid fa-folder-open" style={{ color: '#a855f7' }}></i> 1. Solo Fuentes Locales ({selectedSourceIds.size})
+          <i className="fa-solid fa-folder-open" style={{ color: 'var(--primary)' }}></i> 1. Solo Fuentes Locales ({selectedSourceIds.size})
         </button>
         <button
           type="button"
           className={`toggle-btn ${searchMode === 'web' ? 'active' : ''}`}
           onClick={() => setSearchMode('web')}
         >
-          <i className="fa-solid fa-globe" style={{ color: '#38bdf8' }}></i> 2. Búsqueda Web Agentica
+          <i className="fa-solid fa-globe" style={{ color: 'var(--primary)' }}></i> 2. Búsqueda Web Agentica
         </button>
         <button
           type="button"
           className={`toggle-btn ${searchMode === 'hybrid' ? 'active' : ''}`}
           onClick={() => setSearchMode('hybrid')}
         >
-          <i className="fa-solid fa-dna" style={{ color: '#10b981' }}></i> 3. Híbrido (Locales + Web)
+          <i className="fa-solid fa-dna" style={{ color: 'var(--accent)' }}></i> 3. Híbrido (Locales + Web)
         </button>
       </div>
 
       {/* Advanced Search Parameters Panel */}
       {showSearchSettings && (
-        <div className="card glass-card" style={{ marginBottom: '1.25rem', padding: '1.25rem', border: '1px solid rgba(56,189,248,0.3)', background: 'rgba(15, 23, 42, 0.85)' }}>
+        <div className="card glass-card" style={{ marginBottom: '1.25rem', padding: '1.25rem', border: '1px solid var(--border-amber)', background: 'var(--bg-card)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-            <h4 style={{ margin: 0, fontSize: '0.9rem', color: '#38bdf8', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+            <h4 style={{ margin: 0, fontSize: '0.9rem', color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
               <i className="fa-solid fa-sliders"></i> Controles de Búsqueda Web y Precisión RAG
             </h4>
             <button className="btn btn-sm btn-secondary" onClick={() => setShowSearchSettings(false)} style={{ fontSize: '0.7rem' }}>Cerrar</button>
@@ -742,15 +742,15 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
             {/* Active Session & Search Mode Badge Bar */}
             <div style={{ padding: '0.55rem 0.875rem', borderBottom: '1px solid var(--border-glass)', background: 'rgba(99, 102, 241, 0.08)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.8125rem', flexWrap: 'wrap', gap: '0.5rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                <span style={{ color: '#818cf8', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+                <span style={{ color: 'var(--primary)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
                   {searchMode === 'local' && (
-                    <><i className="fa-solid fa-folder-open" style={{ color: '#a855f7' }}></i> RAG Local ({selectedSourceIds.size > 0 ? `${selectedSourceIds.size} fuentes` : 'Sin fuentes - Conocimiento Crudo'})</>
+                    <><i className="fa-solid fa-folder-open" style={{ color: 'var(--primary)' }}></i> RAG Local ({selectedSourceIds.size > 0 ? `${selectedSourceIds.size} fuentes` : 'Sin fuentes - Conocimiento Crudo'})</>
                   )}
-                  {searchMode === 'web' && <><i className="fa-solid fa-globe" style={{ color: '#38bdf8' }}></i> RAG Web Agentico</>}
-                  {searchMode === 'hybrid' && <><i className="fa-solid fa-dna" style={{ color: '#10b981' }}></i> RAG Híbrido (Locales + Web)</>}
+                  {searchMode === 'web' && <><i className="fa-solid fa-globe" style={{ color: 'var(--primary)' }}></i> RAG Web Agentico</>}
+                  {searchMode === 'hybrid' && <><i className="fa-solid fa-dna" style={{ color: 'var(--accent)' }}></i> RAG Híbrido (Locales + Web)</>}
                 </span>
                 {activeSessionObj && (
-                  <span style={{ background: 'rgba(168, 85, 247, 0.2)', color: '#c084fc', padding: '0.15rem 0.5rem', borderRadius: '0.25rem', fontSize: '0.75rem', fontWeight: 600 }}>
+                  <span style={{ background: 'rgba(245, 158, 11, 0.15)', color: 'var(--primary)', padding: '0.15rem 0.5rem', borderRadius: '0.25rem', fontSize: '0.75rem', fontWeight: 600 }}>
                     <i className="fa-solid fa-message"></i> {activeSessionObj.title}
                   </span>
                 )}
