@@ -18,11 +18,13 @@ try:
 except Exception as e:
     print(f"Error al configurar FFmpeg: {e}")
 
+ROOT_DIR = Path(__file__).parent.parent
+
 class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8001
-    upload_dir: str = "uploads"
-    db_path: str = "data/database.db"
+    upload_dir: str = str(ROOT_DIR / "uploads")
+    db_path: str = str(ROOT_DIR / "data" / "database.db")
     
     # Whisper Configuration
     device: str = "cuda"
