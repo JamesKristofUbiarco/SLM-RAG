@@ -167,9 +167,9 @@ export default function TranscriptionViewer({ transcriptionId, onDeleted }: Tran
 
           <button
             type="button"
-            className="btn"
+            className="btn btn-sm btn-danger"
             onClick={handleDelete}
-            style={{ background: 'linear-gradient(135deg, #ef4444, #dc2626)', color: 'white', padding: '0.25rem 0.75rem', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}
+            style={{ background: '#ef4444', border: '1px solid #dc2626', color: '#fff', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
           >
             <i className="fa-solid fa-trash"></i> Eliminar
           </button>

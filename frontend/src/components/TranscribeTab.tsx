@@ -588,23 +588,25 @@ export default function TranscribeTab({
               </div>
 
               {/* Checkboxes */}
-              <div className="form-group checkboxes">
-                <label className="checkbox-label">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', margin: '1rem 0' }}>
+                <label className="checkbox-container">
                   <input
                     type="checkbox"
                     checked={align}
                     disabled={backend !== 'whisperx'}
                     onChange={(e) => setAlign(e.target.checked)}
                   />
+                  <span className="checkmark"></span>
                   Alineación de Palabras (Wav2Vec2)
                 </label>
 
-                <label className="checkbox-label">
+                <label className="checkbox-container">
                   <input
                     type="checkbox"
                     checked={diarize}
                     onChange={(e) => setDiarize(e.target.checked)}
                   />
+                  <span className="checkmark"></span>
                   Diarización de Hablantes (PyAnnote Audio)
                 </label>
               </div>

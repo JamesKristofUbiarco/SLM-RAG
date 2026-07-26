@@ -213,7 +213,7 @@ export default function SummaryTab({ transcriptionList, activeId, setActiveId, a
           {summaryData && (
             <div style={{ marginBottom: '1.25rem', background: 'rgba(255,255,255,0.02)', padding: '0.75rem 1rem', borderRadius: '0.5rem', border: '1px solid var(--border-glass)', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.8rem', color: 'hsl(var(--text-muted))' }}>
-                <span><i className="fa-solid fa-headphones" style={{ color: '#818cf8', marginRight: '0.35rem' }}></i> Reproductor de Audio (Haz clic en cualquier marca de tiempo para saltar aquí)</span>
+                <span><i className="fa-solid fa-headphones" style={{ color: 'var(--primary)', marginRight: '0.35rem' }}></i> Reproductor de Audio (Haz clic en cualquier marca de tiempo para saltar aquí)</span>
               </div>
               <audio
                 ref={audioRef}
@@ -226,11 +226,11 @@ export default function SummaryTab({ transcriptionList, activeId, setActiveId, a
 
           {isGenerating ? (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '1rem', padding: '3rem 1rem', textAlign: 'center' }}>
-              <div className="loading-pulse" style={{ width: '4rem', height: '4rem', borderRadius: '50%', background: 'rgba(99, 102, 241, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid #6366f1' }}>
-                <i className="fa-solid fa-brain" style={{ fontSize: '2rem', color: '#818cf8' }}></i>
+              <div className="loading-pulse" style={{ width: '4rem', height: '4rem', borderRadius: '50%', background: 'rgba(245, 158, 11, 0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid var(--primary)' }}>
+                <i className="fa-solid fa-brain" style={{ fontSize: '2rem', color: 'var(--primary)' }}></i>
               </div>
               <div>
-                <h4 style={{ color: '#818cf8', marginBottom: '0.25rem' }}>
+                <h4 style={{ color: 'var(--primary)', marginBottom: '0.25rem' }}>
                   Generando resumen en {summaryMode === 'essay' ? 'Modo Video Ensayo (Índice de Tiempos)' : 'Modo Reunión (Minuta)'}...
                 </h4>
                 <p style={{ fontSize: '0.8125rem', color: 'hsl(var(--text-muted))', maxWidth: '450px' }}>
