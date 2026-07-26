@@ -530,7 +530,7 @@ export default function SourcesTab({ transcriptionList, onRefresh, active }: Sou
                           {item.word_count || 0}
                         </td>
                         <td>
-                          <span className="badge" style={{ background: 'rgba(99, 102, 241, 0.2)', color: '#818cf8' }}>
+                          <span className="badge" style={{ background: 'rgba(245, 158, 11, 0.15)', color: 'var(--primary)' }}>
                             {item.chunk_count || 0} chunks
                           </span>
                         </td>
@@ -653,7 +653,7 @@ export default function SourcesTab({ transcriptionList, onRefresh, active }: Sou
         <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1.5rem' }} onClick={() => { setMoveSourceTarget(null); setMoveBatchTargets(null); }}>
           <div className="card glass-card" style={{ width: '100%', maxWidth: '460px', padding: '1.75rem', border: '1px solid rgba(129,140,248,0.4)', boxShadow: '0 1rem 3rem rgba(0,0,0,0.5)' }} onClick={e => e.stopPropagation()}>
             <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <i className="fa-solid fa-arrow-right-to-city" style={{ color: '#818cf8' }}></i> {moveBatchTargets ? `Mover ${moveBatchTargets.length} Fuentes` : 'Mover Fuente'}
+              <i className="fa-solid fa-arrow-right-to-city" style={{ color: 'var(--primary)' }}></i> {moveBatchTargets ? `Mover ${moveBatchTargets.length} Fuentes` : 'Mover Fuente'}
             </h3>
             <p style={{ fontSize: '0.85rem', color: '#cbd5e1', marginTop: '0.35rem' }}>
               Selecciona el destino para: <strong>{moveBatchTargets ? `${moveBatchTargets.length} fuentes seleccionadas` : moveSourceTarget?.filename}</strong>

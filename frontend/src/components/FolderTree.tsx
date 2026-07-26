@@ -174,12 +174,10 @@ export default function FolderTree({
           display: 'flex', 
           alignItems: 'center', 
           justifyContent: 'space-between', 
-          padding: '0.3rem 0.5rem', 
-          marginLeft: '1.25rem', 
-          marginTop: '0.25rem',
+          padding: '0.4rem 0.6rem 0.4rem 1.5rem', 
           borderRadius: '0.25rem',
-          background: isSelected ? 'rgba(99, 102, 241, 0.12)' : 'transparent',
-          borderLeft: isSelected ? '2px solid #6366f1' : '2px solid transparent'
+          background: isSelected ? 'rgba(245, 158, 11, 0.12)' : 'transparent',
+          borderLeft: isSelected ? '2px solid var(--primary)' : '2px solid transparent'
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', overflow: 'hidden', flexGrow: 1 }}>
@@ -191,7 +189,7 @@ export default function FolderTree({
             />
             <span className="checkmark"></span>
           </label>
-          <i className="fa-solid fa-file-audio" style={{ color: '#818cf8', fontSize: '0.8rem', flexShrink: 0 }}></i>
+          <i className="fa-solid fa-file-audio" style={{ color: 'var(--primary)', fontSize: '0.8rem', flexShrink: 0 }}></i>
           <span 
             title={source.filename}
             style={{ 
@@ -233,16 +231,16 @@ export default function FolderTree({
       {/* Global Toolbar for Selection */}
       {(onSelectAll || onDeselectAll) && (
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', paddingBottom: '0.5rem', borderBottom: '1px solid var(--border-glass)' }}>
-          <div style={{ fontSize: '0.8125rem', color: '#818cf8', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+          <div style={{ fontSize: '0.8125rem', color: 'var(--primary)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
             <i className="fa-solid fa-layer-group"></i> {selectedSourceIds.size} de {transcriptions.length} fuentes activas
           </div>
           <div style={{ display: 'flex', gap: '0.5rem' }}>
             {onSelectAll && (
               <button
                 type="button"
-                className="btn btn-sm"
+                className="btn btn-sm btn-secondary"
                 onClick={onSelectAll}
-                style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-glass)', color: '#fff' }}
+                style={{ fontSize: '0.75rem', padding: '0.2rem 0.5rem' }}
               >
                 <i className="fa-solid fa-check-double"></i> Marcar Todo
               </button>
@@ -250,9 +248,9 @@ export default function FolderTree({
             {onDeselectAll && (
               <button
                 type="button"
-                className="btn btn-sm"
+                className="btn btn-sm btn-secondary"
                 onClick={onDeselectAll}
-                style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-glass)', color: '#cbd5e1' }}
+                style={{ fontSize: '0.75rem', padding: '0.2rem 0.5rem' }}
               >
                 <i className="fa-solid fa-xmark"></i> Desmarcar
               </button>
@@ -287,13 +285,13 @@ export default function FolderTree({
                 alignItems: 'center',
                 justifyContent: 'space-between',
                 padding: '0.5rem 0.75rem',
-                background: 'linear-gradient(135deg, rgba(99,102,241,0.15), rgba(168,85,247,0.1))',
+                background: 'rgba(245, 158, 11, 0.08)',
                 borderRadius: '0.5rem',
-                border: '1px solid rgba(99,102,241,0.3)'
+                border: '1px solid var(--border-amber)'
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexGrow: 1, cursor: 'pointer' }}>
-                <span onClick={() => toggleProjectCollapse(projectKey)} style={{ width: '1.25rem', color: '#c084fc' }}>
+                <span onClick={() => toggleProjectCollapse(projectKey)} style={{ width: '1.25rem', color: 'var(--primary)' }}>
                   <i className={`fa-solid ${isCollapsed ? 'fa-chevron-right' : 'fa-chevron-down'}`}></i>
                 </span>
 
@@ -307,13 +305,13 @@ export default function FolderTree({
                   <span className="checkmark"></span>
                 </label>
 
-                <span onClick={() => toggleProjectCollapse(projectKey)} style={{ color: '#a855f7', fontSize: '1rem' }}>
+                <span onClick={() => toggleProjectCollapse(projectKey)} style={{ color: 'var(--primary)', fontSize: '1rem' }}>
                   <i className="fa-solid fa-diagram-project"></i>
                 </span>
                 <span onClick={() => toggleProjectCollapse(projectKey)} style={{ fontWeight: 700, fontSize: '0.9rem', color: '#fff' }}>
                   {project.name}
                 </span>
-                <span style={{ fontSize: '0.75rem', color: '#a7f3d0', marginLeft: '0.25rem' }}>
+                <span style={{ fontSize: '0.75rem', color: 'var(--success)', marginLeft: '0.25rem' }}>
                   ({allProjectSourceIds.length} fuentes)
                 </span>
               </div>
