@@ -48,7 +48,20 @@ export default function YouTubeTab({
   const [downloadStepMsg, setDownloadStepMsg] = useState<string>('');
 
   // Batch queue state
-  const [batchProgressList, setBatchProgressList] = useState<Array<{ url: string; status: 'pending' | 'processing' | 'done' | 'error'; message?: string }>>([]);
+  interface ExpandedBatchItem {
+    video_id: string;
+    url: string;
+    title: string;
+    uploader: string;
+    duration: number;
+    duration_string: string;
+    source: string;
+    selected: boolean;
+  }
+
+  const [isExpanding, setIsExpanding] = useState<boolean>(false);
+  const [expandedItems, setExpandedItems] = useState<ExpandedBatchItem[]>([]);
+  const [batchProgressList, setBatchProgressList] = useState<Array<{ url: string; title?: string; status: 'pending' | 'processing' | 'done' | 'error'; message?: string }>>([]);
 
   // Model & Pipeline Settings
   const [backend, setBackend] = useState<string>('whisperx');
@@ -172,18 +185,66 @@ export default function YouTubeTab({
     }
   };
 
-  const handleBatchProcess = async (e: FormEvent) => {
+  // Step 1: Expand Playlists / Channels / Single Links into itemized list
+  const handleExpandBatch = async (e: FormEvent) => {
     e.preventDefault();
-    const urls = batchUrlsText.split('\n').map(u => u.trim()).filter(Boolean);
-    if (urls.length === 0) return;
+    const rawUrls = batchUrlsText.split('\n').map(u => u.trim()).filter(Boolean);
+    if (rawUrls.length === 0) return;
+
+    setIsExpanding(true);
+    try {
+      const res = await fetch('/api/youtube/expand', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ urls: rawUrls })
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Error al desglosar URLs del lote');
+
+      const items: ExpandedBatchItem[] = (data.items || []).map((item: any) => ({
+        ...item,
+        selected: true
+      }));
+
+      setExpandedItems(items);
+      if (items.length === 0) {
+        alert('No se encontraron videos procesables en los enlaces proporcionados.');
+      }
+    } catch (err: any) {
+      alert(`Error desglosando lote: ${err.message}`);
+    } finally {
+      setIsExpanding(false);
+    }
+  };
+
+  const toggleSelectAllItems = (select: boolean) => {
+    setExpandedItems(prev => prev.map(item => ({ ...item, selected: select })));
+  };
+
+  const toggleItemSelection = (index: number) => {
+    setExpandedItems(prev => prev.map((item, idx) => idx === index ? { ...item, selected: !item.selected } : item));
+  };
+
+  // Step 2: Process only the selected items from the expanded list
+  const handleStartExpandedBatch = async () => {
+    const selectedList = expandedItems.filter(i => i.selected);
+    if (selectedList.length === 0) {
+      alert('Por favor selecciona al menos un video para procesar.');
+      return;
+    }
 
     setIsProcessing(true);
-    const initialList = urls.map(url => ({ url, status: 'pending' as const }));
-    setBatchProgressList(initialList);
+    const initialProgress = selectedList.map(item => ({
+      url: item.url,
+      title: item.title,
+      status: 'pending' as const
+    }));
+    setBatchProgressList(initialProgress);
     startPollingStatus();
 
-    for (let i = 0; i < urls.length; i++) {
-      const currentUrl = urls[i];
+    for (let i = 0; i < selectedList.length; i++) {
+      const current = selectedList[i];
       setBatchProgressList(prev => prev.map((item, idx) => idx === i ? { ...item, status: 'processing', message: 'Descargando y transcribiendo...' } : item));
 
       try {
@@ -191,7 +252,7 @@ export default function YouTubeTab({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            url: currentUrl,
+            url: current.url,
             backend,
             model,
             language: language || null,
@@ -203,6 +264,10 @@ export default function YouTubeTab({
 
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Fallo procesamiento');
+
+        if (data.id) {
+          onTranscriptionSuccess(data.id);
+        }
 
         setBatchProgressList(prev => prev.map((item, idx) => idx === i ? { ...item, status: 'done', message: 'Completado' } : item));
       } catch (err: any) {
@@ -415,20 +480,23 @@ export default function YouTubeTab({
               </div>
             </form>
           ) : (
-            /* Batch Queue Form */
-            <form onSubmit={handleBatchProcess} className="flex flex-col gap-4">
+            /* Batch Queue Form (Option A: Expand -> Preview -> Process) */
+            <form onSubmit={handleExpandBatch} className="flex flex-col gap-4">
               <div className="flex flex-col gap-1.5">
                 <label htmlFor="youtube-batch-textarea" className="text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
-                  <i className="fa-solid fa-list-ol text-orange-400"></i> Lista de Enlaces de YouTube (un enlace por línea)
+                  <i className="fa-solid fa-list-ol text-amber-500"></i> Lista de Enlaces o Canales/Playlists de YouTube (un enlace por línea)
                 </label>
                 <textarea
                   id="youtube-batch-textarea"
                   className="w-full bg-white/[0.03] border border-white/10 rounded-lg text-white font-mono p-3 text-xs focus:outline-none focus:border-amber-500 transition-colors leading-relaxed"
-                  rows={6}
-                  placeholder={`https://www.youtube.com/watch?v=abc12345\nhttps://youtu.be/xyz67890\n\nPega múltiples enlaces de YouTube aquí (uno por cada línea).`}
+                  rows={4}
+                  placeholder={`https://www.youtube.com/playlist?list=PLxxx\nhttps://www.youtube.com/@CanalEjemplo/videos\nhttps://www.youtube.com/watch?v=abc12345\n\nPega enlaces de videos, playlists o canales (uno por línea).`}
                   value={batchUrlsText}
-                  onChange={(e) => setBatchUrlsText(e.target.value)}
-                  disabled={isProcessing}
+                  onChange={(e) => {
+                    setBatchUrlsText(e.target.value);
+                    if (expandedItems.length > 0) setExpandedItems([]);
+                  }}
+                  disabled={isProcessing || isExpanding}
                   required
                 />
               </div>
@@ -441,6 +509,7 @@ export default function YouTubeTab({
                     className="w-full bg-[#1e293b] border border-white/10 rounded-lg text-white px-3 py-2 text-xs focus:outline-none focus:border-amber-500" 
                     value={backend} 
                     onChange={handleBackendChange}
+                    disabled={isProcessing || isExpanding}
                   >
                     <option value="whisperx">WhisperX (CUDA + PyAnnote)</option>
                     <option value="openai_whisper">OpenAI Whisper (PyTorch CUDA)</option>
@@ -453,6 +522,7 @@ export default function YouTubeTab({
                     className="w-full bg-[#1e293b] border border-white/10 rounded-lg text-white px-3 py-2 text-xs focus:outline-none focus:border-amber-500" 
                     value={model} 
                     onChange={(e) => setModel(e.target.value)}
+                    disabled={isProcessing || isExpanding}
                   >
                     <option value="large-v3">large-v3 (Máxima Precisión)</option>
                     <option value="medium">medium (Equilibrado)</option>
@@ -462,17 +532,109 @@ export default function YouTubeTab({
                 </div>
               </div>
 
-              <button
-                type="submit"
-                className="w-full py-3 px-5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-zinc-950 font-semibold text-xs rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 transition-all cursor-pointer disabled:opacity-50 mt-2"
-                disabled={isProcessing || !batchUrlsText.trim()}
-              >
-                {isProcessing ? (
-                  <><i className="fa-solid fa-spinner fa-spin"></i> Procesando Lote en Cola...</>
-                ) : (
-                  <><i className="fa-solid fa-layer-group"></i> Descargar y Transcribir Lote</>
-                )}
-              </button>
+              {/* Step 1 Button: Expand */}
+              {expandedItems.length === 0 && (
+                <button
+                  type="submit"
+                  className="w-full py-3 px-5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 font-semibold text-xs rounded-xl border border-amber-500/40 flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50 mt-1"
+                  disabled={isProcessing || isExpanding || !batchUrlsText.trim()}
+                >
+                  {isExpanding ? (
+                    <><i className="fa-solid fa-spinner fa-spin"></i> Desglosando Playlists, Canales y Enlaces...</>
+                  ) : (
+                    <><i className="fa-solid fa-magnifying-glass"></i> Paso 1: Desglosar y Analizar Lote</>
+                  )}
+                </button>
+              )}
+
+              {/* Step 2 Preview: Itemized Checkbox Selector Card */}
+              {expandedItems.length > 0 && (
+                <div className="p-4 rounded-xl bg-slate-950/70 border border-amber-500/30 flex flex-col gap-3">
+                  <div className="flex items-center justify-between flex-wrap gap-2 pb-2 border-b border-white/10">
+                    <span className="text-xs font-semibold text-amber-400 flex items-center gap-1.5">
+                      <i className="fa-solid fa-check-double"></i>
+                      Paso 2: Confirmar Videos ({expandedItems.filter(i => i.selected).length} de {expandedItems.length} seleccionados)
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        className="px-2 py-1 text-[11px] text-zinc-300 hover:text-white bg-white/5 hover:bg-white/10 rounded cursor-pointer transition-colors"
+                        onClick={() => toggleSelectAllItems(true)}
+                        disabled={isProcessing}
+                      >
+                        Marcar todos
+                      </button>
+                      <button
+                        type="button"
+                        className="px-2 py-1 text-[11px] text-zinc-300 hover:text-white bg-white/5 hover:bg-white/10 rounded cursor-pointer transition-colors"
+                        onClick={() => toggleSelectAllItems(false)}
+                        disabled={isProcessing}
+                      >
+                        Desmarcar todos
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Expanded Items List with Checkboxes */}
+                  <div className="flex flex-col gap-1.5 max-h-56 overflow-y-auto pr-1">
+                    {expandedItems.map((item, idx) => (
+                      <label
+                        key={idx}
+                        className={`p-2.5 rounded-lg border text-xs flex items-center justify-between gap-3 cursor-pointer transition-colors select-none ${
+                          item.selected 
+                            ? 'bg-amber-500/10 border-amber-500/30 text-white' 
+                            : 'bg-white/[0.02] border-white/5 text-zinc-500 opacity-60'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                          <input
+                            type="checkbox"
+                            className="w-4 h-4 accent-amber-500 rounded border-white/10 cursor-pointer"
+                            checked={item.selected}
+                            onChange={() => toggleItemSelection(idx)}
+                            disabled={isProcessing}
+                          />
+                          <div className="flex flex-col truncate">
+                            <span className="font-semibold text-zinc-200 truncate">{item.title}</span>
+                            <span className="text-[10px] text-zinc-400 truncate">
+                              {item.uploader} &bull; <span className="text-amber-400/80">{item.source}</span>
+                            </span>
+                          </div>
+                        </div>
+
+                        <span className="text-[11px] font-mono text-zinc-400 shrink-0 bg-white/5 px-2 py-0.5 rounded">
+                          {item.duration_string}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+
+                  {/* Start Batch Button */}
+                  <div className="flex items-center gap-2 pt-2 border-t border-white/10">
+                    <button
+                      type="button"
+                      className="flex-1 py-3 px-5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-zinc-950 font-semibold text-xs rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 transition-all cursor-pointer disabled:opacity-50"
+                      onClick={handleStartExpandedBatch}
+                      disabled={isProcessing || expandedItems.filter(i => i.selected).length === 0}
+                    >
+                      {isProcessing ? (
+                        <><i className="fa-solid fa-spinner fa-spin"></i> Procesando Lote en Cola...</>
+                      ) : (
+                        <><i className="fa-solid fa-play"></i> Iniciar Procesamiento en Lote ({expandedItems.filter(i => i.selected).length} videos)</>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      className="px-3 py-3 rounded-xl bg-white/10 hover:bg-white/15 text-zinc-300 text-xs font-medium cursor-pointer transition-colors"
+                      onClick={() => setExpandedItems([])}
+                      disabled={isProcessing}
+                      title="Volver a ingresar enlaces"
+                    >
+                      <i className="fa-solid fa-rotate-left"></i>
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Batch Itemized Progress List */}
               {batchProgressList.length > 0 && (
@@ -494,9 +656,12 @@ export default function YouTubeTab({
                             : 'bg-white/[0.02] border-white/10 text-zinc-300'
                         }`}
                       >
-                        <span className="truncate flex-1 font-mono text-[11px]">
-                          <strong className="mr-1">#{idx + 1}</strong> {item.url}
-                        </span>
+                        <div className="flex flex-col truncate flex-1 font-mono text-[11px]">
+                          <span className="truncate">
+                            <strong className="mr-1">#{idx + 1}</strong> {item.title || item.url}
+                          </span>
+                          {item.title && <span className="text-[10px] text-zinc-400 truncate font-sans">{item.url}</span>}
+                        </div>
                         <span className="text-[11px] font-semibold shrink-0">
                           {item.status === 'pending' && <span className="text-zinc-400"><i className="fa-solid fa-hourglass-start mr-1"></i> En espera</span>}
                           {item.status === 'processing' && <span className="text-indigo-400"><i className="fa-solid fa-spinner fa-spin mr-1"></i> {item.message || 'Procesando...'}</span>}

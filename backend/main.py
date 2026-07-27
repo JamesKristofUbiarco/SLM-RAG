@@ -86,6 +86,9 @@ def process_summary_background(transcription_id: int, filename: str, text: str, 
         if mode == "essay":
             # Mode "essay": Video Essay / Conference / Podcast timestamped summary
             summary_text = rag_service.generate_essay_summary(filename, segments, text)
+        elif mode == "recipe":
+            # Mode "recipe": Cooking Recipe summary (Ingredients, Step Index with timestamps, Detailed Steps per recipe)
+            summary_text = rag_service.generate_recipe_summary(filename, segments, text)
         elif mode == "doc_executive":
             # Mode "doc_executive": Executive synthesis for document files
             summary_text = rag_service.generate_doc_executive_summary(filename, text)
@@ -96,7 +99,8 @@ def process_summary_background(transcription_id: int, filename: str, text: str, 
             # Mode "web_digest": Fast digest for web articles/pages
             summary_text = rag_service.generate_web_digest_summary(filename, text)
         else:
-            # Mode "meeting": Executive summary + Speakers + Commitments for meetings
+            # Mode "meeting": Minuta ejecutiva (participantes, agenda, acuerdos, compromisos, próximos pasos)
+            # Para grabaciones de reuniones, llamadas y conversaciones habladas — NO documentos escritos
             summary_text = rag_service.generate_summary(filename, text)
             if segments:
                 speaker_analysis = rag_service.generate_speaker_analysis(filename, segments)
@@ -790,6 +794,12 @@ def download_youtube_audio_sync(url: str) -> dict:
             }],
             'quiet': True,
             'no_warnings': True,
+            'nocheckcertificate': True,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'web', 'ios'],
+                }
+            }
         }
         if ffmpeg_exe.exists():
             ydl_opts['ffmpeg_location'] = str(scripts_dir)
@@ -850,6 +860,222 @@ async def download_youtube_audio(payload: YouTubeRequest):
     except Exception as e:
         logger.error(f"Error al descargar audio de YouTube ({payload.url}): {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error al descargar audio de YouTube: {str(e)}")
+
+
+class YouTubeProcessRequest(BaseModel):
+    url: str
+    backend: Optional[str] = "whisperx"
+    model: Optional[str] = "large-v3"
+    language: Optional[str] = None
+    diarize: Optional[bool] = True
+    align: Optional[bool] = True
+    hf_token: Optional[str] = None
+
+@app.post("/api/youtube/download-only")
+async def download_youtube_only(payload: YouTubeRequest):
+    """Download audio stream from YouTube video into uploads/youtube/ and return audio path."""
+    if not payload.url or not payload.url.strip():
+        raise HTTPException(status_code=400, detail="Por favor proporciona una URL válida de YouTube.")
+    try:
+        data = await run_in_threadpool(download_youtube_audio_sync, payload.url.strip())
+        return {
+            "message": "Audio de YouTube descargado correctamente.",
+            "audio_path": data["relative_path"],
+            "filename": data["filename"]
+        }
+    except Exception as e:
+        logger.error(f"Error al descargar audio de YouTube ({payload.url}): {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error al descargar audio de YouTube: {str(e)}")
+
+@app.post("/api/youtube/process")
+async def process_youtube_video(payload: YouTubeProcessRequest, background_tasks: BackgroundTasks):
+    """Download YouTube video audio, run Whisper/WhisperX transcription, and index vector embeddings."""
+    if not payload.url or not payload.url.strip():
+        raise HTTPException(status_code=400, detail="Por favor proporciona una URL válida de YouTube.")
+    
+    start_request_time = time.time()
+    
+    # 1. Download YouTube Audio
+    try:
+        download_info = await run_in_threadpool(download_youtube_audio_sync, payload.url.strip())
+    except Exception as e:
+        logger.error(f"Error al descargar audio de YouTube ({payload.url}): {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error al descargar audio de YouTube: {str(e)}")
+        
+    mp3_filepath = download_info["filepath"]
+    original_filename = download_info["filename"]
+    media_filepath_for_db = download_info["relative_path"]
+    
+    # Check if hash already exists
+    with open(mp3_filepath, 'rb') as f:
+        file_hash = hashlib.sha256(f.read()).hexdigest()
+        
+    with get_db() as conn:
+        existing = conn.execute("SELECT id FROM transcriptions WHERE file_hash = ?", (file_hash,)).fetchone()
+        if existing:
+            logger.info(f"Existing transcription found for hash {file_hash} (ID {existing['id']})")
+            return {
+                "id": existing["id"],
+                "filename": original_filename,
+                "status": "La transcripción ya existía previamente."
+            }
+
+    # 2. Transcribe Audio
+    try:
+        model_name = payload.model or settings.whisper_model
+        logger.info(f"Transcribing YouTube audio {mp3_filepath} using backend {payload.backend} and model {model_name}...")
+        
+        result = await run_in_threadpool(
+            whisper_service.transcribe,
+            audio_path=str(mp3_filepath),
+            backend=payload.backend or "whisperx",
+            model_name=model_name,
+            language=payload.language,
+            align=payload.align if payload.align is not None else True,
+            diarize=payload.diarize if payload.diarize is not None else True,
+            hf_token_override=payload.hf_token
+        )
+        
+        total_words = result["metrics"]["total_words"]
+        text_content = ""
+        for seg in result["segments"]:
+            text_content += seg.get("text", "") + " "
+        text_content = text_content.strip()
+        segments_json = json.dumps(result["segments"])
+        
+        # 3. Save to SQLite DB
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO transcriptions (filename, filepath, file_hash, text, segments_json) VALUES (?, ?, ?, ?, ?)",
+                (original_filename, media_filepath_for_db, file_hash, text_content, segments_json)
+            )
+            transcription_id = cursor.lastrowid
+            conn.commit()
+            
+        logger.info(f"Saved YouTube transcription with ID: {transcription_id}")
+        
+        # 4. Generate RAG Vector Embeddings
+        try:
+            whisper_service.current_stage = "Generando embeddings y fragmentos RAG"
+            whisper_service.current_progress = "Almacenando fragmentos vectoriales en base de datos SQLite..."
+            await run_in_threadpool(rag_service.store_chunks, transcription_id, text_content)
+        except Exception as e:
+            logger.error(f"Error en embeddings para transcripción de YouTube {transcription_id}: {str(e)}")
+        finally:
+            whisper_service.current_stage = "Listo / En espera"
+            whisper_service.current_progress = ""
+
+        total_elapsed = time.time() - start_request_time
+        return {
+            "id": transcription_id,
+            "filename": original_filename,
+            "total_words": total_words,
+            "elapsed_seconds": round(total_elapsed, 2),
+            "status": "Transcripción de YouTube completada exitosamente."
+        }
+    except Exception as err:
+        logger.error(f"Fallo en transcripción de YouTube: {str(err)}")
+        raise HTTPException(status_code=500, detail=f"Fallo en transcripción de YouTube: {str(err)}")
+
+
+class YouTubeExpandRequest(BaseModel):
+    urls: List[str]
+
+def expand_youtube_urls_sync(raw_urls: List[str]) -> List[dict]:
+    import yt_dlp
+    
+    ydl_opts = {
+        'extract_flat': 'in_playlist',
+        'skip_download': True,
+        'quiet': True,
+        'no_warnings': True,
+    }
+    
+    results = []
+    seen_ids = set()
+    
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        for raw_url in raw_urls:
+            url = raw_url.strip()
+            if not url:
+                continue
+                
+            try:
+                info = ydl.extract_info(url, download=False)
+                if not info:
+                    continue
+                
+                # Check if it's a playlist or channel container
+                if '_type' in info and info['_type'] in ['playlist', 'multi_video']:
+                    entries = info.get('entries', [])
+                    container_title = info.get("title", "Playlist/Canal")
+                    for entry in entries:
+                        if not entry:
+                            continue
+                        v_id = entry.get('id') or entry.get('url', '')
+                        if not v_id or v_id in seen_ids:
+                            continue
+                        seen_ids.add(v_id)
+                        
+                        entry_url = entry.get('url', '')
+                        if entry_url and not entry_url.startswith('http'):
+                            full_v_url = f"https://www.youtube.com/watch?v={entry_url}"
+                        elif not entry_url:
+                            full_v_url = f"https://www.youtube.com/watch?v={v_id}"
+                        else:
+                            full_v_url = entry_url
+
+                        results.append({
+                            "video_id": v_id,
+                            "url": full_v_url,
+                            "title": entry.get("title", f"Video {v_id}"),
+                            "uploader": entry.get("uploader") or entry.get("channel") or container_title,
+                            "duration": entry.get("duration", 0),
+                            "duration_string": format_seconds(entry.get("duration", 0)),
+                            "source": container_title
+                        })
+                else:
+                    # Single video
+                    v_id = info.get("id", "")
+                    if v_id and v_id in seen_ids:
+                        continue
+                    if v_id:
+                        seen_ids.add(v_id)
+                    results.append({
+                        "video_id": v_id,
+                        "url": url,
+                        "title": info.get("title", "Video de YouTube"),
+                        "uploader": info.get("uploader") or info.get("channel") or "Canal YouTube",
+                        "duration": info.get("duration", 0),
+                        "duration_string": format_seconds(info.get("duration", 0)),
+                        "source": "Enlace Directo"
+                    })
+            except Exception as ex:
+                logger.warning(f"No se pudo expandir la URL '{url}': {ex}")
+                results.append({
+                    "video_id": "",
+                    "url": url,
+                    "title": url,
+                    "uploader": "Desconocido",
+                    "duration": 0,
+                    "duration_string": "00:00",
+                    "source": "Enlace Directo"
+                })
+
+    return results
+
+@app.post("/api/youtube/expand")
+async def expand_youtube_urls(payload: YouTubeExpandRequest):
+    """Expand YouTube video, playlist, or channel URLs into individual video metadata list."""
+    if not payload.urls:
+        raise HTTPException(status_code=400, detail="Proporciona al menos una URL de YouTube.")
+    try:
+        items = await run_in_threadpool(expand_youtube_urls_sync, payload.urls)
+        return {"total": len(items), "items": items}
+    except Exception as e:
+        logger.error(f"Error al expandir URLs de YouTube: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error al expandir lote de YouTube: {str(e)}")
 
 
 @app.get("/api/transcriptions")
@@ -1027,10 +1253,13 @@ async def semantic_search(
         raise HTTPException(status_code=500, detail=f"Error al realizar búsqueda semántica: {str(e)}")
 
 @app.post("/api/ingest_file")
-async def ingest_file(file: UploadFile = File(...)):
+async def ingest_file(
+    file: UploadFile = File(...),
+    mode: str = Form("fast")
+):
     """
     Ingest any document, image, or text file into the system.
-    Saves the original file to uploads/documents/, parses structure with Docling & Gemma 4,
+    Saves the original file to uploads/documents/, parses structure with Docling & optional Gemma 4,
     creates a transcription database record, and indexes vector chunks in the RAG.
     """
     from document_parser import parse_document
@@ -1051,9 +1280,9 @@ async def ingest_file(file: UploadFile = File(...)):
 
     rel_filepath = f"uploads/documents/{filename}"
 
-    # Parse document with Docling + Gemma 4 Multimodal
+    # Parse document with Docling (fast) or Docling + Gemma 4 Multimodal (llm)
     try:
-        parsed = await run_in_threadpool(parse_document, str(saved_filepath))
+        parsed = await run_in_threadpool(parse_document, str(saved_filepath), mode=mode)
         extracted_text = parsed.get("markdown", "")
     except Exception as e:
         logger.error(f"Error parsing document '{filename}': {str(e)}", exc_info=True)
@@ -1669,9 +1898,10 @@ async def get_chat_history_legacy(transcription_id: int):
     """Legacy route for retrieving chat history for a single transcription."""
     return await get_multi_chat_history(transcription_id=transcription_id)
 
-@app.post("/api/transcriptions/{id}/delete")
-async def delete_transcription(id: int):
-    """Delete a transcription, its vector chunks, summaries, chat logs, and local media if uploaded."""
+class BatchDeleteRequest(BaseModel):
+    ids: List[int]
+
+def delete_single_transcription_internal(id: int) -> bool:
     filepath = None
     with get_db() as conn:
         row = conn.execute("SELECT filepath FROM transcriptions WHERE id = ?", (id,)).fetchone()
@@ -1685,11 +1915,12 @@ async def delete_transcription(id: int):
         cursor.execute("DELETE FROM summaries WHERE transcription_id = ?", (id,))
         cursor.execute("DELETE FROM chat_history WHERE transcription_id = ?", (id,))
         cursor.execute("DELETE FROM transcriptions WHERE id = ?", (id,))
-        if cursor.rowcount == 0:
-            raise HTTPException(status_code=404, detail="Transcripción no encontrada")
+        deleted = cursor.rowcount > 0
         conn.commit()
-        
-    # If the file exists in the uploads directory, delete it to free space (only if not referenced by others)
+
+    if not deleted:
+        return False
+
     if filepath:
         file_to_del = Path(filepath)
         if not file_to_del.is_absolute():
@@ -1701,7 +1932,6 @@ async def delete_transcription(id: int):
             if resolved_file.exists() and resolved_file.is_relative_to(uploads_dir):
                 other_ref = False
                 with get_db() as conn:
-                    # Check if any other database row references this same filepath (either exact relative or absolute)
                     row = conn.execute(
                         "SELECT count(*) as cnt FROM transcriptions WHERE (filepath = ? OR filepath = ?) AND id != ?",
                         (filepath, str(resolved_file), id)
@@ -1716,8 +1946,34 @@ async def delete_transcription(id: int):
                     logger.info(f"Preserved shared media file on disk: {resolved_file} (still referenced by other transcriptions)")
         except Exception as e:
             logger.error(f"Failed to delete file {filepath} from disk: {str(e)}")
-            
+
     logger.info(f"Successfully deleted transcription record ID {id}.")
+    return True
+
+@app.post("/api/transcriptions/{id}/delete")
+async def delete_transcription(id: int):
+    """Delete a transcription, its vector chunks, summaries, chat logs, and local media if uploaded."""
+    success = await run_in_threadpool(delete_single_transcription_internal, id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Transcripción no encontrada")
+    return {"message": f"Transcripción {id} eliminada correctamente."}
+
+@app.post("/api/transcriptions/delete-batch")
+async def delete_transcriptions_batch(payload: BatchDeleteRequest):
+    """Delete multiple transcriptions, vector chunks, summaries, and local files in batch."""
+    if not payload.ids:
+        raise HTTPException(status_code=400, detail="Proporciona al menos un ID para eliminar.")
+    
+    deleted_count = 0
+    for t_id in payload.ids:
+        success = await run_in_threadpool(delete_single_transcription_internal, t_id)
+        if success:
+            deleted_count += 1
+            
+    return {
+        "message": f"Se eliminaron correctamente {deleted_count} fuentes.",
+        "deleted_count": deleted_count
+    }
     return {"status": "success", "message": f"Deleted transcription ID {id} and all related chunks/history/files."}
 
 @app.get("/api/logs")

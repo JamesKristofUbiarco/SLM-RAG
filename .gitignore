@@ -13,7 +13,28 @@ wheels/
 # Database and media uploads
 data/
 uploads/
+backend/uploads/
+backend/data/
 bin/
 logs/
 *.db
 *.log
+
+# Media & Binary file extensions
+*.mp3
+*.mp4
+*.webm
+*.wav
+*.m4a
+*.ogg
+*.flac
+*.aac
+*.opus
+*.pdf
+*.docx
+*.pptx
+*.xlsx
+*.zip
+*.tar
+*.gz
+

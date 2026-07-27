@@ -170,20 +170,21 @@ export default function FilesTab({ active, onIngested, onRedirectToTranscription
     setQueue(prev => prev.filter(i => i.status !== 'success'));
   };
 
-  const processBatch = async () => {
+  const processBatch = async (mode: 'fast' | 'llm' = 'fast') => {
     const pendingItems = queue.filter(i => i.compatible && i.status === 'pending');
     if (pendingItems.length === 0) return;
 
     setIsProcessingBatch(true);
 
     for (const item of pendingItems) {
-      setQueue(prev => prev.map(i => i.id === item.id ? { ...i, status: 'processing', ingestMsg: 'Analizando...' } : i));
+      setQueue(prev => prev.map(i => i.id === item.id ? { ...i, status: 'processing', ingestMsg: mode === 'fast' ? 'Procesando con Docling...' : 'Analizando con Visión LLM...' } : i));
 
       try {
         const formData = new FormData();
         formData.append('file', item.file);
+        formData.append('mode', mode);
 
-        const res = await fetch('/api/ingest/file', {
+        const res = await fetch('/api/ingest_file', {
           method: 'POST',
           body: formData,
         });
@@ -314,21 +315,42 @@ export default function FilesTab({ active, onIngested, onRedirectToTranscription
             </div>
 
             {singleItem.compatible && (
-              <button
-                type="button"
-                id="btn-ingest-file"
-                className="w-full py-3 px-5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-zinc-950 font-semibold text-xs rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 transition-all cursor-pointer disabled:opacity-50 mt-1"
-                onClick={processBatch}
-                disabled={isProcessingBatch || singleItem.status === 'success'}
-              >
-                {isProcessingBatch ? (
-                  <><i className="fa-solid fa-brain fa-spin"></i> Procesando con Visión AI & RAG...</>
-                ) : singleItem.status === 'success' ? (
-                  <><i className="fa-solid fa-circle-check"></i> Indexado Correctamente</>
-                ) : (
-                  <><i className="fa-solid fa-database"></i> Agregar al RAG</>  
-                )}
-              </button>
+              <div className="flex flex-col gap-2.5 mt-1">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    id="btn-ingest-fast"
+                    className="py-2.5 px-4 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-zinc-950 font-semibold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-lg shadow-amber-500/20 transition-all cursor-pointer disabled:opacity-50"
+                    onClick={() => processBatch('fast')}
+                    disabled={isProcessingBatch || singleItem.status === 'success'}
+                  >
+                    {isProcessingBatch ? (
+                      <><i className="fa-solid fa-spinner fa-spin"></i> Procesando...</>
+                    ) : singleItem.status === 'success' ? (
+                      <><i className="fa-solid fa-circle-check"></i> Indexado Correctamente</>
+                    ) : (
+                      <><i className="fa-solid fa-bolt"></i> Análisis rápido con Docling</>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    id="btn-ingest-llm"
+                    className="py-2.5 px-4 bg-white/10 hover:bg-white/15 border border-white/15 text-white font-medium text-xs rounded-xl flex items-center justify-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+                    onClick={() => processBatch('llm')}
+                    disabled={isProcessingBatch || singleItem.status === 'success'}
+                  >
+                    {isProcessingBatch ? (
+                      <><i className="fa-solid fa-brain fa-spin"></i> Analizando Visión LLM...</>
+                    ) : (
+                      <><i className="fa-solid fa-brain text-amber-400"></i> Análisis con modelo LLM</>
+                    )}
+                  </button>
+                </div>
+                <p className="text-[11px] text-zinc-400 text-center leading-relaxed">
+                  <strong>Docling Rápido</strong> extrae texto y tablas en ~1-2 segundos. <strong>Modelo LLM</strong> incluye análisis visión de figuras e imágenes embebidas.
+                </p>
+              </div>
             )}
           </div>
         )}
@@ -349,8 +371,8 @@ export default function FilesTab({ active, onIngested, onRedirectToTranscription
                 )}
               </div>
 
-              <div className="flex items-center gap-2">
-                {successCount > 0 && !isProcessingBatch && (
+              <div className="flex items-center gap-2 flex-wrap">
+                {completedCount > 0 && !isProcessingBatch && (
                   <button className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-white text-xs font-medium cursor-pointer" onClick={clearCompleted}>
                     <i className="fa-solid fa-broom"></i> Limpiar Completados
                   </button>
@@ -361,15 +383,18 @@ export default function FilesTab({ active, onIngested, onRedirectToTranscription
                   </button>
                 )}
                 <button
-                  className="py-1.5 px-4 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-xs rounded-lg flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                  onClick={processBatch}
+                  className="py-1.5 px-3 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-xs rounded-lg flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  onClick={() => processBatch('fast')}
                   disabled={isProcessingBatch || pendingCount === 0}
                 >
-                  {isProcessingBatch ? (
-                    <><i className="fa-solid fa-brain fa-spin"></i> Procesando Lote...</>
-                  ) : (
-                    <><i className="fa-solid fa-play"></i> Procesar Lote ({pendingCount})</>
-                  )}
+                  <i className="fa-solid fa-bolt"></i> Docling Rápido ({pendingCount})
+                </button>
+                <button
+                  className="py-1.5 px-3 bg-white/10 hover:bg-white/15 border border-white/15 text-white font-medium text-xs rounded-lg flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  onClick={() => processBatch('llm')}
+                  disabled={isProcessingBatch || pendingCount === 0}
+                >
+                  <i className="fa-solid fa-brain text-amber-400"></i> Visión LLM ({pendingCount})
                 </button>
               </div>
             </div>

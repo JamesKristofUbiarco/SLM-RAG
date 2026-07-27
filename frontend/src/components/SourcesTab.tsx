@@ -60,7 +60,10 @@ export default function SourcesTab({ transcriptionList, onRefresh, active }: Sou
   };
 
   useEffect(() => {
-    fetchProjectsAndFolders();
+    if (active) {
+      fetchProjectsAndFolders();
+      if (onRefresh) onRefresh();
+    }
   }, [active]);
 
   // Clear selections when list changes
@@ -287,20 +290,89 @@ export default function SourcesTab({ transcriptionList, onRefresh, active }: Sou
 
   const renderOriginalViewer = () => {
     if (!inspectSource) return null;
-    const isMedia = inspectSource.source_type === 'audio' || inspectSource.source_type === 'video' || inspectSource.source_type === 'youtube';
+    const fn = (inspectSource.filename || '').toLowerCase();
+    const fileUrl = `/api/files/view/${inspectSource.id}`;
+
+    const isPdf = fn.endsWith('.pdf');
+    const isVideo = fn.endsWith('.mp4') || fn.endsWith('.webm') || fn.endsWith('.mkv') || fn.endsWith('.mov') || fn.endsWith('.avi') || inspectSource.source_type === 'video';
+    const isAudio = fn.endsWith('.mp3') || fn.endsWith('.wav') || fn.endsWith('.m4a') || fn.endsWith('.ogg') || fn.endsWith('.flac') || fn.endsWith('.aac') || inspectSource.source_type === 'audio' || inspectSource.source_type === 'youtube';
 
     return (
       <div className="flex flex-col gap-4">
-        {isMedia && inspectSource.filepath && (
-          <div className="p-3 bg-black/40 rounded-lg border border-white/10">
-            <audio controls src={`/api/media?path=${encodeURIComponent(inspectSource.filepath)}`} className="w-full h-10" />
+        {/* PDF Embedded Viewer */}
+        {isPdf && (
+          <div className="flex flex-col gap-2">
+            <div className="w-full h-[480px] rounded-xl overflow-hidden border border-white/10 bg-black/60 shadow-inner">
+              <iframe
+                src={fileUrl}
+                className="w-full h-full border-none"
+                title={inspectSource.filename}
+              />
+            </div>
+            <div className="flex items-center justify-between text-xs text-zinc-400 px-1">
+              <span className="flex items-center gap-1.5"><i className="fa-solid fa-file-pdf text-red-400"></i> Visualizador PDF Embebido</span>
+              <a
+                href={fileUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-amber-400 hover:underline flex items-center gap-1 font-medium"
+              >
+                <i className="fa-solid fa-up-right-from-square"></i> Abrir PDF en pestaña nueva
+              </a>
+            </div>
           </div>
         )}
-        <div className="p-4 bg-black/30 rounded-lg border border-white/10 font-mono text-xs text-zinc-300 space-y-1">
+
+        {/* Video Player */}
+        {isVideo && !isPdf && (
+          <div className="flex flex-col gap-2">
+            <div className="w-full max-h-[420px] bg-black rounded-xl overflow-hidden border border-white/10 flex items-center justify-center shadow-inner">
+              <video
+                controls
+                src={fileUrl}
+                className="max-h-[420px] w-full rounded-xl"
+              />
+            </div>
+            <div className="flex items-center justify-between text-xs text-zinc-400 px-1">
+              <span className="flex items-center gap-1.5"><i className="fa-solid fa-video text-sky-400"></i> Reproductor de Video Original</span>
+              <a
+                href={fileUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-amber-400 hover:underline flex items-center gap-1 font-medium"
+              >
+                <i className="fa-solid fa-download"></i> Descargar Video
+              </a>
+            </div>
+          </div>
+        )}
+
+        {/* Audio Player */}
+        {isAudio && !isVideo && !isPdf && (
+          <div className="p-4 bg-black/40 rounded-xl border border-white/10 flex flex-col gap-2">
+            <div className="flex items-center justify-between text-xs text-zinc-300 font-medium">
+              <span className="flex items-center gap-1.5 text-amber-400">
+                <i className="fa-solid fa-headphones"></i> Reproductor de Audio Original
+              </span>
+              <a
+                href={fileUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-zinc-400 hover:text-white flex items-center gap-1 text-[11px]"
+              >
+                <i className="fa-solid fa-download"></i> Descargar Audio
+              </a>
+            </div>
+            <audio controls src={fileUrl} className="w-full h-11 rounded-lg outline-none mt-1" />
+          </div>
+        )}
+
+        {/* Metadata Information Box */}
+        <div className="p-4 bg-black/30 rounded-xl border border-white/10 font-mono text-xs text-zinc-300 space-y-1.5">
           <p><span className="text-zinc-500">ID DB:</span> {inspectSource.id}</p>
           <p><span className="text-zinc-500">Nombre:</span> {inspectSource.filename}</p>
-          <p><span className="text-zinc-500">Tipo de Fuente:</span> {inspectSource.source_type || 'Multimedia'}</p>
-          <p><span className="text-zinc-500">Ruta de Origen:</span> {inspectSource.filepath || 'N/A'}</p>
+          <p><span className="text-zinc-500">Tipo de Fuente:</span> {inspectSource.source_type || 'Documento/Multimedia'}</p>
+          <p><span className="text-zinc-500">Ruta Física:</span> {inspectSource.filepath || 'N/A'}</p>
           <p><span className="text-zinc-500">Total de Palabras:</span> {inspectSource.word_count || 0}</p>
           <p><span className="text-zinc-500">Total Chunks Vectoriales:</span> {inspectSource.chunk_count || 0}</p>
           <p><span className="text-zinc-500">Ubicación:</span> {getSourceLocationLabel(inspectSource)}</p>

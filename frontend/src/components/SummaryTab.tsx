@@ -5,7 +5,7 @@ import { isAudioVideoTranscription } from './TranscriptionHistoryBox';
 
 const marked = new Marked();
 
-type SummaryMode = 'meeting' | 'essay' | 'doc_executive' | 'doc_analysis' | 'web_digest';
+type SummaryMode = 'meeting' | 'essay' | 'recipe' | 'doc_executive' | 'doc_analysis' | 'web_digest';
 
 interface SummaryTabProps {
   transcriptionList: Transcription[];
@@ -38,7 +38,7 @@ export default function SummaryTab({ transcriptionList, activeId, setActiveId, a
   useEffect(() => {
     if (selectedItem) {
       if (isMedia) {
-        if (summaryMode !== 'meeting' && summaryMode !== 'essay') {
+        if (summaryMode !== 'meeting' && summaryMode !== 'essay' && summaryMode !== 'recipe') {
           setSummaryMode('meeting');
         }
       } else {
@@ -166,6 +166,7 @@ export default function SummaryTab({ transcriptionList, activeId, setActiveId, a
     switch (mode) {
       case 'meeting': return 'Modo Reunión (Minuta)';
       case 'essay': return 'Modo Video Ensayo (Marcas de Tiempo)';
+      case 'recipe': return 'Modo Recetas de Cocina (Ingredientes y Pasos)';
       case 'doc_executive': return 'Síntesis Ejecutiva de Documento';
       case 'doc_analysis': return 'Análisis Técnico de Documento';
       case 'web_digest': return 'Resumen Digest Web';
@@ -173,12 +174,31 @@ export default function SummaryTab({ transcriptionList, activeId, setActiveId, a
     }
   };
 
+  const renderModeOptions = () => {
+    if (isMedia) {
+      return (
+        <>
+          <option value="meeting">📋 Modo Reunión / Minuta</option>
+          <option value="essay">📺 Modo Video Ensayo / Conferencia (Tiempos)</option>
+          <option value="recipe">🍳 Modo Recetas de Cocina (Ingredientes y Pasos)</option>
+        </>
+      );
+    }
+    return (
+      <>
+        <option value="doc_executive">📄 Síntesis Ejecutiva de Documento</option>
+        <option value="doc_analysis">🔬 Análisis Técnico y Desglose</option>
+        <option value="web_digest">🌐 Resumen Digest / Contenido Web</option>
+      </>
+    );
+  };
+
   return (
     <section id="summary-tab" className={`flex-col gap-6 w-full ${active ? 'flex' : 'hidden'}`}>
       <div className="mb-1">
         <h2 className="text-2xl font-semibold text-white tracking-tight mb-1">Resúmenes Inteligentes</h2>
         <p className="text-sm text-zinc-400">
-          Genera resúmenes estructurados adaptados al tipo de contenido (Reunión o Video Ensayo para contenido multimedia; Síntesis Ejecutiva, Análisis Técnico o Digest Web para documentos).
+          Genera resúmenes estructurados adaptados al tipo de contenido (Reunión, Video Ensayo o Recetas de Cocina para contenido multimedia; Síntesis Ejecutiva, Análisis Técnico o Digest Web para documentos).
         </p>
       </div>
 
@@ -217,39 +237,30 @@ export default function SummaryTab({ transcriptionList, activeId, setActiveId, a
               {summaryData?.filename || 'Archivo de Fuente'}
             </h3>
 
-            {/* Controls Bar */}
-            <div className="flex items-center gap-2 flex-wrap">
-              <select
-                className="bg-[#1e293b] border border-white/10 rounded-lg text-white px-3 py-2 text-xs font-medium focus:outline-none focus:border-amber-500 transition-colors"
-                value={summaryMode}
-                onChange={(e) => setSummaryMode(e.target.value as SummaryMode)}
-                disabled={isGenerating}
-                title="Selecciona el modo de resumen"
-              >
-                {isMedia ? (
-                  <>
-                    <option value="meeting">📋 Modo Reunión / Minuta</option>
-                    <option value="essay">📺 Modo Video Ensayo / Conferencia (Tiempos)</option>
-                  </>
-                ) : (
-                  <>
-                    <option value="doc_executive">📄 Síntesis Ejecutiva de Documento</option>
-                    <option value="doc_analysis">🔬 Análisis Técnico y Desglose</option>
-                    <option value="web_digest">🌐 Resumen Digest / Contenido Web</option>
-                  </>
-                )}
-              </select>
-
-              {summaryData?.summary && !isGenerating && (
-                <button
-                  type="button"
-                  className="px-3.5 py-2 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10 text-white text-xs font-medium flex items-center gap-1.5 cursor-pointer transition-colors"
-                  onClick={() => handleGenerateSummary(true)}
+            {/* Controls Bar (shown when summary already exists to allow re-generating in another mode) */}
+            {summaryData?.summary && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <select
+                  className="bg-[#1e293b] border border-white/10 rounded-lg text-white px-3 py-2 text-xs font-medium focus:outline-none focus:border-amber-500 transition-colors"
+                  value={summaryMode}
+                  onChange={(e) => setSummaryMode(e.target.value as SummaryMode)}
+                  disabled={isGenerating}
+                  title="Selecciona el modo de resumen"
                 >
-                  <i className="fa-solid fa-arrows-rotate text-amber-400"></i> Regenerar Resumen
-                </button>
-              )}
-            </div>
+                  {renderModeOptions()}
+                </select>
+
+                {!isGenerating && (
+                  <button
+                    type="button"
+                    className="px-3.5 py-2 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10 text-white text-xs font-medium flex items-center gap-1.5 cursor-pointer transition-colors"
+                    onClick={() => handleGenerateSummary(true)}
+                  >
+                    <i className="fa-solid fa-arrows-rotate text-amber-400"></i> Regenerar Resumen
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Audio Player Card (Only for audio/video media files) */}
@@ -298,28 +309,17 @@ export default function SummaryTab({ transcriptionList, activeId, setActiveId, a
                   El resumen aún no se ha generado
                 </h3>
                 <p className="text-xs text-zinc-400 max-w-md mx-auto mb-4">
-                  Elige el modo deseado para este tipo de contenido ({isMedia ? 'Reunión o Video Ensayo' : 'Síntesis Ejecutiva, Análisis Técnico o Digest Web'}) y haz clic en el botón para iniciar.
+                  Elige el modo deseado para este tipo de contenido ({isMedia ? 'Reunión, Video Ensayo o Recetas de Cocina' : 'Síntesis Ejecutiva, Análisis Técnico o Digest Web'}) y haz clic en el botón para iniciar.
                 </p>
               </div>
 
               <div className="flex items-center gap-3 flex-wrap justify-center">
                 <select
-                  className="bg-[#1e293b] border border-white/10 rounded-lg text-white px-3 py-2 text-xs font-medium focus:outline-none focus:border-amber-500 transition-colors"
+                  className="bg-[#1e293b] border border-white/10 rounded-lg text-white px-3.5 py-2.5 text-xs font-medium focus:outline-none focus:border-amber-500 transition-colors"
                   value={summaryMode}
                   onChange={(e) => setSummaryMode(e.target.value as SummaryMode)}
                 >
-                  {isMedia ? (
-                    <>
-                      <option value="meeting">📋 Modo Reunión / Minuta</option>
-                      <option value="essay">📺 Modo Video Ensayo / Conferencia (Tiempos)</option>
-                    </>
-                  ) : (
-                    <>
-                      <option value="doc_executive">📄 Síntesis Ejecutiva de Documento</option>
-                      <option value="doc_analysis">🔬 Análisis Técnico y Desglose</option>
-                      <option value="web_digest">🌐 Resumen Digest / Contenido Web</option>
-                    </>
-                  )}
+                  {renderModeOptions()}
                 </select>
 
                 <button 

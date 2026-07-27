@@ -174,7 +174,7 @@ class RAGService:
         return False
 
     def generate_summary(self, title: str, text: str) -> str:
-        """Generate a structured summary, using Map-Reduce only if the transcript exceeds context window capacity."""
+        """Generate a Meeting Minutes summary for audio/video recordings of meetings, calls, or discussions."""
         words = text.split()
         
         # Estimate context window capability (Spanish tokenization safety estimation: 1 word ~ 1.5 tokens)
@@ -188,13 +188,30 @@ class RAGService:
         
         if len(words) <= max_transcript_words:
             print(f"Transcript size ({len(words)} words) fits within the model context window ({context_window} tokens). Using single prompt summary.")
-            prompt = f"""Escribe un resumen ejecutivo estructurado y detallado del archivo '{title}'.
-Usa el siguiente formato:
-1. **Temática General / Objetivo del audio**: De qué se trata principalmente.
-2. **Puntos Clave / Ideas Principales**: Lista numerada detallando los temas principales.
-3. **Detalles Clave / Conclusiones**: Resumen final o conclusiones clave.
+            prompt = f"""Analiza la siguiente transcripción de una reunión o llamada grabada del archivo '{title}'.
+Genera una **Minuta de Reunión** ejecutiva, estructurada y profesional en Markdown con la siguiente estructura:
 
-Transcripción:
+# 📋 Minuta de Reunión: {title}
+
+## 👥 Participantes
+Lista los participantes o locutores identificados en la conversación (si están disponibles).
+
+## 📌 Agenda y Temas Tratados
+Lista numerada de los temas principales discutidos durante la reunión.
+
+## 🗣️ Desarrollo de la Reunión
+Para cada tema tratado, un breve resumen de los puntos debatidos, posturas y argumentos clave.
+
+## ✅ Acuerdos y Decisiones
+Lista de decisiones concretas tomadas durante la reunión. Si no hay ninguna, indicarlo.
+
+## 📝 Compromisos y Tareas Asignadas
+Lista de tareas o compromisos adquiridos, indicando el responsable y el plazo si se mencionaron.
+
+## 🔜 Próximos Pasos
+Acciones inmediatas o siguientes reuniones planificadas.
+
+Transcripción de la reunión:
 {text}"""
             return self.call_ollama_generate(prompt)
         
@@ -210,8 +227,8 @@ Transcripción:
             total_parts = (len(words) - 1) // chunk_word_size + 1
             print(f"Map phase: Summarizing chunk {part_number} of {total_parts}...")
             
-            prompt_map = f"""A continuación se presenta la parte {part_number} de {total_parts} de la transcripción del archivo '{title}'.
-Genera un resumen analítico y estructurado de los temas tratados en esta parte específica. Sé detallado y mantén nombres, datos y hechos clave.
+            prompt_map = f"""A continuación se presenta la parte {part_number} de {total_parts} de la transcripción de la reunión '{title}'.
+Extrae y resume: los temas tratados, los acuerdos alcanzados, las decisiones tomadas y los compromisos adquiridos en esta parte. Sé preciso y mantén nombres, datos y hechos clave.
 
 Fragmento de Transcripción:
 {sub_text}"""
@@ -220,22 +237,40 @@ Fragmento de Transcripción:
             partial_summaries.append(f"--- RESUMEN PARCIAL PARTE {part_number} ---\n{summary_part}")
 
         # Reduce Phase
-        print("Reduce phase: Synthesizing executive summary from all partial summaries...")
+        print("Reduce phase: Synthesizing final meeting minutes from all partial summaries...")
         combined_partials = "\n\n".join(partial_summaries)
-        prompt_reduce = f"""A continuación se presentan los resúmenes parciales de las distintas partes del archivo '{title}'.
-Tu objetivo es sintetizar todos estos resúmenes parciales en un único "Resumen Ejecutivo Final" que sea completo y estructurado.
+        prompt_reduce = f"""A continuación se presentan los resúmenes parciales de las distintas partes de la reunión '{title}'.
+Tu objetivo es sintetizar todos estos resúmenes en una **Minuta de Reunión Ejecutiva Final** completa y estructurada.
 
-Formato requerido:
-1. **Temática General / Objetivo del audio**: De qué se trata principalmente.
-2. **Puntos Clave / Ideas Principales**: Lista numerada consolidando los argumentos clave de todo el archivo.
-3. **Detalles Clave / Conclusiones**: Consolidación final de conclusiones o decisiones tomadas.
+Formato requerido en Markdown:
+
+# 📋 Minuta de Reunión: {title}
+
+## 👥 Participantes
+Lista los participantes o locutores identificados.
+
+## 📌 Agenda y Temas Tratados
+Lista numerada consolidada de todos los temas tratados en la reunión.
+
+## 🗣️ Desarrollo de la Reunión
+Resumen del debate y puntos clave por tema.
+
+## ✅ Acuerdos y Decisiones
+Lista consolidada de todas las decisiones tomadas.
+
+## 📝 Compromisos y Tareas Asignadas
+Lista de compromisos, responsables y plazos.
+
+## 🔜 Próximos Pasos
+Acciones inmediatas acordadas.
 
 Resúmenes parciales a consolidar:
 {combined_partials}"""
         
         final_summary = self.call_ollama_generate(prompt_reduce, temperature=0.2)
-        print("Structured executive summary generated successfully via Map-Reduce.")
+        print("Meeting Minutes generated successfully via Map-Reduce.")
         return final_summary
+
 
     def generate_essay_summary(self, title: str, segments: List[Dict[str, Any]], text: str = "") -> str:
         """
@@ -296,6 +331,78 @@ Transcripción con marcas de tiempo:
 {full_timestamped_text}"""
 
         print(f"Generating Video Essay timestamped summary for '{title}'...")
+        return self.call_ollama_generate(prompt)
+
+    def generate_recipe_summary(self, title: str, segments: List[Dict[str, Any]], text: str = "") -> str:
+        """
+        Generate a Recipe Video summary divided by recipes (sections) and sub-sections:
+        Ingredients, Step Index (timestamps), and Detailed Steps per recipe.
+        """
+        def format_timestamp(seconds: float) -> str:
+            sec = int(seconds)
+            h = sec // 3600
+            m = (sec % 3600) // 60
+            s = sec % 60
+            if h > 0:
+                return f"{h:02d}:{m:02d}:{s:02d}"
+            return f"{m:02d}:{s:02d}"
+
+        timestamped_lines = []
+        if segments:
+            for seg in segments:
+                start_sec = seg.get("start", 0)
+                time_str = format_timestamp(start_sec)
+                t = seg.get("text", "").strip()
+                if t:
+                    timestamped_lines.append(f"[{time_str}] {t}")
+        
+        full_timestamped_text = "\n".join(timestamped_lines) if timestamped_lines else text
+
+        words = full_timestamped_text.split()
+        context_window = settings.ollama_context_length
+        max_transcript_words = int((context_window - 4000) / 1.5)
+        max_transcript_words = max(max_transcript_words, 2500)
+
+        if len(words) > max_transcript_words:
+            step = (len(words) // max_transcript_words) + 1
+            words_sampled = words[::step]
+            full_timestamped_text = " ".join(words_sampled)
+
+        prompt = f"""Analiza minuciosamente la siguiente transcripción con marcas de tiempo del video de cocina '{title}'.
+Identifica todas las recetas explicadas o preparadas a lo largo del video (pueden ser 1 o varias recetas independientes).
+
+REGLAS DE ORO OBLIGATORIAS:
+1. SÉ EXTREMADAMENTE DETALLADO Y EXHAUSTIVO. NO RESUMAS EN UNA SOLA FRASE CORTA. Explica cada paso minuciosamente.
+2. CONSERVA TODAS LAS CANTIDADES Y PESOS EXACTOS: Incluye todos los números, gramos, cucharadas, temperaturas, tiempos y piezas mencionadas (ej: "350g de tira New York", "43g o 3 cucharadas de mantequilla sin sal", "12g o 3 a 4 dientes de ajo machacados", "2 ramitas de tomillo", "2 ramitas de romero", "95°C de horno", "45-50°C internos", "refrigerar destapado de 2 a 24 horas", "bañar de 1 a 2 minutos", "reposar de 5 a 10 minutos con los aromáticos encima").
+3. DESCRIBE LAS TÉCNICAS Y GESTOS CULINARIOS: Explica cómo realizar cada acción (ej: "secar el corte", "sellar primero la grasa lateral", "ladear el sartén para juntar la mantequilla derretida y bañar la carne continuamente con una cuchara", "verter los jugos de cocción sobre el corte al reposar").
+
+Para CADA receta identificada en el video, genera ESTRICTAMENTE la siguiente estructura en Markdown:
+
+# 🍳 Receta: [Nombre de la Receta]
+
+## 🛒 Ingredientes Completo
+Lista detallada de TODOS los ingredientes e insumos necesarios para esta receta específica, con sus cantidades y pesos exactos (ej: gramos, cucharadas, piezas, especias, tipo de corte):
+- **[Ingrediente]**: Cantidad exacta, peso o especificación mencionada.
+
+## ⏱️ Índice de Pasos (Marcas de Tiempo)
+Lista VERTICAL de viñetas (CADA LÍNEA DEBE COMENZAR CON '- ') con las marcas de tiempo exactas [HH:MM:SS] o [MM:SS] extraídas de la transcripción y el nombre o acción de cada paso de preparación:
+- [HH:MM:SS] Nombre del Paso 1
+- [HH:MM:SS] Nombre del Paso 2
+
+## 📝 Pasos Explicados al Detalle
+Para cada uno de los pasos listados en el índice de esta receta:
+### [HH:MM:SS] Nombre del Paso
+- **Preparación Explicada**: Descripción rica, detallada y paso a paso del procedimiento, técnicas de cocina, utensilios usados, temperaturas y combinaciones aplicadas en este paso exacto.
+- **Cantidades, Tiempos y Consejos**: Cantidades específicas de insumos usados en este paso, tiempos exactos de cocción o reposo, temperaturas clave y trucos/razones dadas por el cocinero (ej: por qué refrigerar destapado o por qué ladear el sartén).
+
+---
+
+IMPORTANTE: Si el video contiene 1 sola receta, genera las subsecciones (Ingredientes Completo, Índice de Pasos, Pasos Explicados al Detalle) 1 sola vez. Si contiene N recetas distintas (por ejemplo 3 platillos diferentes), repite esta estructura completa para cada una de las recetas (Receta 1, Receta 2, ..., Receta N).
+
+Transcripción con marcas de tiempo:
+{full_timestamped_text}"""
+
+        print(f"Generating Cooking Recipe summary for '{title}'...")
         return self.call_ollama_generate(prompt)
 
     def generate_speaker_analysis(self, title: str, segments: List[Dict[str, Any]]) -> str:

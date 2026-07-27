@@ -157,9 +157,10 @@ def transcribe_scanned_pdf_with_gemma4(filepath: str) -> str:
     pdf.close()
     return "\n\n---\n\n".join(pages_markdown)
 
-def parse_document(filepath: str) -> Dict[str, Any]:
+def parse_document(filepath: str, mode: str = "fast") -> Dict[str, Any]:
     """
     Parse a document (PDF, Word, PowerPoint, Text, Code, or Image) into structured Markdown.
+    mode: 'fast' (pure Docling/text, ~1-2s) or 'llm' (Docling + Gemma 4 vision picture analysis).
     Returns dict with keys: 'markdown', 'title', 'file_type', 'image_descriptions'.
     """
     path = Path(filepath)
@@ -186,6 +187,13 @@ def parse_document(filepath: str) -> Dict[str, Any]:
 
     # 2. Standalone Image Files
     if ext in IMAGE_EXTENSIONS:
+        if mode == "fast":
+            return {
+                "markdown": f"# Imagen: {filename}\n\n_Análisis de imagen rápido omitido en modo Docling. Usa el modo LLM para describir esta imagen._",
+                "title": filename,
+                "file_type": "image",
+                "image_descriptions": []
+            }
         logger.info(f"Analyzing standalone image '{filename}' with Gemma 4...")
         description = describe_image_with_gemma4(str(path))
         markdown = f"# Análisis de Imagen: {filename}\n\n"
@@ -201,15 +209,19 @@ def parse_document(filepath: str) -> Dict[str, Any]:
         }
 
     # 3. Binary Documents via Docling (PDF, DOCX, PPTX, HTML)
-    logger.info(f"Parsing binary document '{filename}' with Docling...")
+    logger.info(f"Parsing binary document '{filename}' with Docling (mode='{mode}')...")
     try:
         from docling.document_converter import DocumentConverter, PdfFormatOption
         from docling.datamodel.pipeline_options import PdfPipelineOptions
         from docling.datamodel.base_models import InputFormat
 
         pipeline_options = PdfPipelineOptions()
-        pipeline_options.generate_page_images = True
-        pipeline_options.generate_picture_images = True
+        if mode == "llm":
+            pipeline_options.generate_page_images = True
+            pipeline_options.generate_picture_images = True
+        else:
+            pipeline_options.generate_page_images = False
+            pipeline_options.generate_picture_images = False
 
         doc_converter = DocumentConverter(
             format_options={
@@ -220,35 +232,38 @@ def parse_document(filepath: str) -> Dict[str, Any]:
         result = doc_converter.convert(str(path))
         doc_markdown = result.document.export_to_markdown()
 
-        # Check if Docling OCR produced garbage / scanned handwriting noise for PDF
-        if ext == ".pdf" and is_noisy_ocr(doc_markdown):
-            logger.warning(f"Detected low quality / handwritten OCR in '{filename}'. Invoking Gemma 4 Vision transcription...")
-            vision_markdown = transcribe_scanned_pdf_with_gemma4(str(path))
-            if vision_markdown.strip():
-                doc_markdown = vision_markdown
-
-        # Process pictures extracted by Docling if any
         image_descriptions = []
-        if hasattr(result.document, "pictures") and result.document.pictures:
-            temp_dir = path.parent / ".temp_images"
-            temp_dir.mkdir(exist_ok=True)
-            for idx, pic in enumerate(result.document.pictures):
-                try:
-                    if hasattr(pic, "get_image"):
-                        pil_img = pic.get_image(result.document)
-                        if pil_img and pil_img.width >= 100 and pil_img.height >= 100:
-                            temp_img_path = temp_dir / f"pic_{idx}.png"
-                            pil_img.save(temp_img_path)
-                            img_desc = describe_image_with_gemma4(str(temp_img_path))
-                            if img_desc:
-                                image_descriptions.append(img_desc)
-                                doc_markdown += f"\n\n---\n### [Análisis Visual - Imagen #{idx+1}]\n\n{img_desc}\n"
-                            try:
-                                temp_img_path.unlink()
-                            except Exception:
-                                pass
-                except Exception as img_err:
-                    logger.warning(f"Failed to process embedded picture #{idx}: {str(img_err)}")
+
+        # Only invoke Gemma 4 vision if explicitly requested in 'llm' mode
+        if mode == "llm":
+            # Check if Docling OCR produced garbage / scanned handwriting noise for PDF
+            if ext == ".pdf" and is_noisy_ocr(doc_markdown):
+                logger.warning(f"Detected low quality / handwritten OCR in '{filename}'. Invoking Gemma 4 Vision transcription...")
+                vision_markdown = transcribe_scanned_pdf_with_gemma4(str(path))
+                if vision_markdown.strip():
+                    doc_markdown = vision_markdown
+
+            # Process pictures extracted by Docling if any
+            if hasattr(result.document, "pictures") and result.document.pictures:
+                temp_dir = path.parent / ".temp_images"
+                temp_dir.mkdir(exist_ok=True)
+                for idx, pic in enumerate(result.document.pictures):
+                    try:
+                        if hasattr(pic, "get_image"):
+                            pil_img = pic.get_image(result.document)
+                            if pil_img and pil_img.width >= 100 and pil_img.height >= 100:
+                                temp_img_path = temp_dir / f"pic_{idx}.png"
+                                pil_img.save(temp_img_path)
+                                img_desc = describe_image_with_gemma4(str(temp_img_path))
+                                if img_desc:
+                                    image_descriptions.append(img_desc)
+                                    doc_markdown += f"\n\n---\n### [Análisis Visual - Imagen #{idx+1}]\n\n{img_desc}\n"
+                                try:
+                                    temp_img_path.unlink()
+                                except Exception:
+                                    pass
+                    except Exception as img_err:
+                        logger.warning(f"Failed to process embedded picture #{idx}: {str(img_err)}")
 
         return {
             "markdown": doc_markdown,
