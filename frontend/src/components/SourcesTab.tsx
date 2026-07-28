@@ -6,10 +6,11 @@ import FolderTree from './FolderTree';
 interface SourcesTabProps {
   transcriptionList: Transcription[];
   onRefresh?: () => Promise<void>;
+  onResumeInStudio?: (payload: any) => void;
   active: boolean;
 }
 
-export default function SourcesTab({ transcriptionList, onRefresh, active }: SourcesTabProps) {
+export default function SourcesTab({ transcriptionList, onRefresh, onResumeInStudio, active }: SourcesTabProps) {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
   const [viewMode, setViewMode] = useState<'hierarchy' | 'table'>('hierarchy');
@@ -109,6 +110,37 @@ export default function SourcesTab({ transcriptionList, onRefresh, active }: Sou
       alert(`Error al promover nota: ${err.message}`);
     } finally {
       setIsPromotingNoteId(null);
+    }
+  };
+
+  const handleExportFlashcardsCSV = (noteTitle: string, rawContent: string) => {
+    try {
+      const parsed = typeof rawContent === 'string' ? JSON.parse(rawContent) : rawContent;
+      const cards = parsed.data || parsed.flashcards || [];
+      if (!Array.isArray(cards) || cards.length === 0) {
+        alert('No se encontraron flashcards válidas en esta nota.');
+        return;
+      }
+      
+      const rows = cards.map((c: any) => {
+        const cleanFront = (c.front || '').replace(/"/g, '""');
+        const cleanBack = (c.back || '').replace(/"/g, '""');
+        return `"${cleanFront}","${cleanBack}"`;
+      });
+      
+      const csvContent = '\uFEFF' + rows.join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const sanitizedTitle = (noteTitle || 'flashcards').replace(/[^a-zA-Z0-9_-]/g, '_');
+      link.href = url;
+      link.setAttribute('download', `${sanitizedTitle}_flashcards.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert('Error al exportar las flashcards a CSV.');
     }
   };
 
@@ -644,55 +676,142 @@ export default function SourcesTab({ transcriptionList, onRefresh, active }: Sou
                 Tu cuaderno está vacío. Crea notas o guarda fragmentos desde el Chat y los Resúmenes.
               </div>
             ) : (
-              notes.map(n => (
-                <div key={n.id} className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 flex flex-col gap-2 transition-all hover:border-amber-500/30">
-                  <div className="flex items-center justify-between">
-                    <span className="font-semibold text-white text-xs truncate max-w-[70%]">{n.title}</span>
-                    <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-400 text-[10px] font-semibold border border-amber-500/30">
-                      {n.source_type === 'chat_fragment' ? '💬 Chat' : n.source_type === 'summary_fragment' ? '📄 Resumen' : '📌 Nota'}
-                    </span>
-                  </div>
+              notes.map(n => {
+                const isStudioQuiz = n.source_type === 'studio_quiz';
+                const isStudioFlashcards = n.source_type === 'studio_flashcards';
+                const isStudioBriefing = n.source_type === 'studio_briefing';
+                const isStudioFAQ = n.source_type === 'studio_faq';
+                const isStudioTimeline = n.source_type === 'studio_timeline';
+                const isStudioPodcast = n.source_type === 'studio_podcast';
+                const isStudioOther = n.source_type?.startsWith('studio_') && !isStudioQuiz && !isStudioFlashcards && !isStudioBriefing && !isStudioFAQ && !isStudioTimeline && !isStudioPodcast;
+                const isStudioAny = isStudioQuiz || isStudioFlashcards || isStudioBriefing || isStudioFAQ || isStudioTimeline || isStudioPodcast || isStudioOther;
 
-                  <p className="text-xs text-zinc-300 line-clamp-3 leading-relaxed whitespace-pre-wrap font-sans">
-                    {n.content}
-                  </p>
+                let displayContent = n.content;
+                if (isStudioQuiz) {
+                  displayContent = 'Examen interactivo guardado. Haz clic en "Retomar en Studio" para resolver las preguntas.';
+                } else if (isStudioFlashcards) {
+                  displayContent = 'Colección de tarjetas 3D guardada. Haz clic en "Retomar en Studio" para repasar.';
+                } else if (typeof n.content === 'string' && n.content.trim().startsWith('{')) {
+                  try {
+                    const parsed = JSON.parse(n.content);
+                    if (parsed.content) displayContent = parsed.content;
+                  } catch (e) {}
+                }
 
-                  <div className="flex items-center justify-between pt-2 border-t border-white/5 text-[11px]">
-                    <span className="text-zinc-500">{formatDate(n.created_at)}</span>
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        className="px-2 py-1 rounded bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 font-medium cursor-pointer transition-colors flex items-center gap-1"
-                        onClick={() => handlePromoteNoteToSource(n.id)}
-                        disabled={isPromotingNoteId === n.id}
-                        title="Convertir esta nota en una Fuente RAG indexada"
-                      >
-                        {isPromotingNoteId === n.id ? (
-                          <i className="fa-solid fa-spinner fa-spin"></i>
-                        ) : (
-                          <><i className="fa-solid fa-file-import"></i> ➕ A RAG</>
+                return (
+                  <div key={n.id} className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 flex flex-col gap-2 transition-all hover:border-amber-500/30">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold text-white text-xs truncate max-w-[65%]">{n.title}</span>
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${
+                        isStudioQuiz ? 'bg-purple-500/15 text-purple-300 border-purple-500/30' :
+                        isStudioFlashcards ? 'bg-pink-500/15 text-pink-300 border-pink-500/30' :
+                        isStudioBriefing ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' :
+                        isStudioFAQ ? 'bg-sky-500/15 text-sky-300 border-sky-500/30' :
+                        isStudioTimeline ? 'bg-amber-500/15 text-amber-300 border-amber-500/30' :
+                        isStudioPodcast ? 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30' :
+                        isStudioOther ? 'bg-amber-500/15 text-amber-300 border-amber-500/30' :
+                        n.source_type === 'chat_fragment' ? 'bg-sky-500/15 text-sky-300 border-sky-500/30' :
+                        n.source_type === 'summary_fragment' ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' :
+                        'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                      }`}>
+                        {isStudioQuiz ? '📝 Examen' :
+                         isStudioFlashcards ? '🎴 Flashcards' :
+                         isStudioBriefing ? '📄 Briefing' :
+                         isStudioFAQ ? '❓ FAQ' :
+                         isStudioTimeline ? '⏳ Línea de Tiempo' :
+                         isStudioPodcast ? '🎙️ Podcast' :
+                         isStudioOther ? '⚡ Studio' :
+                         n.source_type === 'chat_fragment' ? '💬 Chat' :
+                         n.source_type === 'summary_fragment' ? '📄 Resumen' : '📌 Nota'}
+                      </span>
+                    </div>
+
+                    <p className="text-xs text-zinc-300 line-clamp-3 leading-relaxed whitespace-pre-wrap font-sans">
+                      {displayContent}
+                    </p>
+
+                    <div className="flex items-center justify-between pt-2 border-t border-white/5 text-[11px] flex-wrap gap-2">
+                      <span className="text-zinc-500">{formatDate(n.created_at)}</span>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {isStudioAny && (
+                          <button
+                            type="button"
+                            className="px-2.5 py-1 rounded bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold cursor-pointer transition-all flex items-center gap-1 shadow-sm"
+                            onClick={() => {
+                              try {
+                                let parsed: any = null;
+                                if (typeof n.content === 'string' && n.content.trim().startsWith('{')) {
+                                  try { parsed = JSON.parse(n.content); } catch (e) { parsed = null; }
+                                }
+                                
+                                const rawMode = n.source_type?.replace('studio_', '') || 'briefing';
+                                const mode = parsed?.artifact_type || parsed?.type || rawMode;
+                                const artifactType = parsed?.type || (mode === 'quiz' || mode === 'flashcards' ? mode : 'markdown');
+                                
+                                const payload = {
+                                  type: artifactType,
+                                  artifact_type: mode,
+                                  title: parsed?.title || n.title,
+                                  content: parsed?.content || n.content,
+                                  data: parsed?.data || parsed?.quiz || parsed?.flashcards || []
+                                };
+                                
+                                onResumeInStudio?.(payload);
+                              } catch (e) {
+                                alert('No se pudo decodificar el contenido de Studio.');
+                              }
+                            }}
+                            title="Abrir y retomar este elemento en Studio Hub"
+                          >
+                            <i className="fa-solid fa-gamepad"></i> Retomar en Studio
+                          </button>
                         )}
-                      </button>
-                      <button
-                        type="button"
-                        className="px-2 py-1 rounded bg-white/10 hover:bg-white/15 text-zinc-300 cursor-pointer"
-                        onClick={() => navigator.clipboard.writeText(n.content)}
-                        title="Copiar texto"
-                      >
-                        <i className="fa-solid fa-copy"></i>
-                      </button>
-                      <button
-                        type="button"
-                        className="px-2 py-1 rounded bg-red-500/10 hover:bg-red-500/20 text-red-400 cursor-pointer"
-                        onClick={() => handleDeleteNote(n.id)}
-                        title="Eliminar nota"
-                      >
-                        <i className="fa-solid fa-trash"></i>
-                      </button>
+
+                        {isStudioFlashcards && (
+                          <button
+                            type="button"
+                            className="px-2.5 py-1 rounded bg-pink-500/20 hover:bg-pink-500/30 border border-pink-500/40 text-pink-300 font-bold cursor-pointer transition-all flex items-center gap-1 shadow-sm"
+                            onClick={() => handleExportFlashcardsCSV(n.title, n.content)}
+                            title="Exportar esta colección de flashcards a un archivo CSV"
+                          >
+                            <i className="fa-solid fa-file-csv"></i> CSV
+                          </button>
+                        )}
+
+                        <button
+                          type="button"
+                          className="px-2 py-1 rounded bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 font-medium cursor-pointer transition-colors flex items-center gap-1"
+                          onClick={() => handlePromoteNoteToSource(n.id)}
+                          disabled={isPromotingNoteId === n.id}
+                          title="Convertir esta nota en una Fuente RAG indexada"
+                        >
+                          {isPromotingNoteId === n.id ? (
+                            <i className="fa-solid fa-spinner fa-spin"></i>
+                          ) : (
+                            <><i className="fa-solid fa-file-import"></i> ➕ A RAG</>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          className="px-2 py-1 rounded bg-white/10 hover:bg-white/15 text-zinc-300 cursor-pointer"
+                          onClick={() => navigator.clipboard.writeText(n.content)}
+                          title="Copiar texto"
+                        >
+                          <i className="fa-solid fa-copy"></i>
+                        </button>
+                        <button
+                          type="button"
+                          className="px-2 py-1 rounded bg-red-500/10 hover:bg-red-500/20 text-red-400 cursor-pointer"
+                          onClick={() => handleDeleteNote(n.id)}
+                          title="Eliminar nota"
+                        >
+                          <i className="fa-solid fa-trash"></i>
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>

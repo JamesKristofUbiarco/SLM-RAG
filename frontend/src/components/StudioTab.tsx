@@ -6,10 +6,17 @@ import FolderTree from './FolderTree';
 
 const marked = new Marked();
 
+interface PendingStudioResume {
+  artifact_type: string;
+  data: any;
+}
+
 interface StudioTabProps {
   transcriptionList: Transcription[];
   activeId: number | null;
   active: boolean;
+  pendingResume?: PendingStudioResume | null;
+  onClearPendingResume?: () => void;
 }
 
 interface QuizQuestion {
@@ -41,7 +48,7 @@ const defaultConfigMap: Record<string, ToolConfig> = {
   flashcards: { count: 10, difficulty: 'Intermedio', lengthSetting: 'Estándar', customInstructions: '' },
 };
 
-export default function StudioTab({ transcriptionList, activeId, active }: StudioTabProps) {
+export default function StudioTab({ transcriptionList, activeId, active, pendingResume, onClearPendingResume }: StudioTabProps) {
   const [selectedSourceIds, setSelectedSourceIds] = useState<Set<number>>(new Set());
   const [projects, setProjects] = useState<Project[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
@@ -96,6 +103,36 @@ export default function StudioTab({ transcriptionList, activeId, active }: Studi
       fetchProjectsAndFolders();
     }
   }, [active]);
+
+  useEffect(() => {
+    if (active && pendingResume) {
+      const mode = pendingResume.artifact_type || pendingResume.type || 'briefing';
+      setActiveArtifactType(mode);
+      
+      const isQuizOrFlashcards = mode === 'quiz' || mode === 'flashcards';
+      const artifactType = isQuizOrFlashcards ? mode : 'markdown';
+      const questionsOrCards = pendingResume.data || pendingResume.quiz || pendingResume.flashcards || [];
+      const markdownContent = pendingResume.content || (typeof pendingResume === 'string' ? pendingResume : '');
+      
+      const restoredArtifactData = {
+        ...pendingResume,
+        type: artifactType,
+        artifact_type: mode,
+        content: markdownContent,
+        data: questionsOrCards
+      };
+      
+      setArtifactData(restoredArtifactData);
+      setUserAnswers({});
+      setShowQuizResults(false);
+      setCurrentCardIndex(0);
+      setIsFlipped(false);
+      
+      if (onClearPendingResume) {
+        onClearPendingResume();
+      }
+    }
+  }, [active, pendingResume]);
 
   useEffect(() => {
     if (activeId) {
@@ -209,7 +246,7 @@ export default function StudioTab({ transcriptionList, activeId, active }: Studi
     return { __html: rawHtml };
   };
 
-  const handleSaveToNotebook = async (title: string, content: string) => {
+  const handleSaveToNotebook = async (title: string, content: string, sourceType = 'user_note') => {
     try {
       const res = await fetch('/api/notes', {
         method: 'POST',
@@ -217,13 +254,77 @@ export default function StudioTab({ transcriptionList, activeId, active }: Studi
         body: JSON.stringify({
           title: title,
           content: content,
-          source_type: 'user_note'
+          source_type: sourceType
         })
       });
-      if (res.ok) alert('¡Contenido guardado con éxito en tu Cuaderno de Notas!');
-    } catch (e) {
-      alert('Error al guardar en el cuaderno');
+      if (res.ok) {
+        alert('¡Guardado con éxito en tu Cuaderno de Notas!');
+      } else {
+        const errData = await res.json();
+        alert(`Error al guardar: ${errData.detail || 'Error en servidor'}`);
+      }
+    } catch (e: any) {
+      alert(`Error al guardar en el cuaderno: ${e.message}`);
     }
+  };
+
+  const handleSaveQuizToNotebook = () => {
+    if (!artifactData || !Array.isArray(artifactData.data)) return;
+    const title = `Examen: ${artifactData.title || getToolLabel('quiz')}`;
+    const payload = JSON.stringify({
+      type: 'quiz',
+      artifact_type: 'quiz',
+      data: artifactData.data,
+      title: artifactData.title
+    });
+    handleSaveToNotebook(title, payload, 'studio_quiz');
+  };
+
+  const handleSaveFlashcardsToNotebook = () => {
+    if (!artifactData || !Array.isArray(artifactData.data)) return;
+    const title = `Flashcards: ${artifactData.title || getToolLabel('flashcards')}`;
+    const payload = JSON.stringify({
+      type: 'flashcards',
+      artifact_type: 'flashcards',
+      data: artifactData.data,
+      title: artifactData.title
+    });
+    handleSaveToNotebook(title, payload, 'studio_flashcards');
+  };
+
+  const handleSaveMarkdownArtifactToNotebook = () => {
+    if (!artifactData || !artifactData.content) return;
+    const toolLabel = getToolLabel(activeArtifactType);
+    const title = `${toolLabel}: ${artifactData.title || 'Studio Hub'}`;
+    const payload = JSON.stringify({
+      type: 'markdown',
+      artifact_type: activeArtifactType,
+      title: title,
+      content: artifactData.content
+    });
+    handleSaveToNotebook(title, payload, `studio_${activeArtifactType}`);
+  };
+
+  const handleExportFlashcardsCSV = () => {
+    if (!artifactData || !Array.isArray(artifactData.data) || artifactData.data.length === 0) return;
+    const cards = artifactData.data;
+    const rows = cards.map((c: any) => {
+      const cleanFront = (c.front || '').replace(/"/g, '""');
+      const cleanBack = (c.back || '').replace(/"/g, '""');
+      return `"${cleanFront}","${cleanBack}"`;
+    });
+    
+    const csvContent = '\uFEFF' + rows.join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const sanitizedTitle = (artifactData.title || 'flashcards').replace(/[^a-zA-Z0-9_-]/g, '_');
+    link.href = url;
+    link.setAttribute('download', `${sanitizedTitle}_flashcards.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const calculateScore = (questions: QuizQuestion[]) => {
@@ -419,7 +520,7 @@ export default function StudioTab({ transcriptionList, activeId, active }: Studi
             ) : artifactData ? (
               <div className="flex flex-col gap-4">
                 {/* Markdown Artifact View */}
-                {artifactData.type === 'markdown' && (
+                {(artifactData.type === 'markdown' || Boolean(artifactData.content && artifactData.type !== 'quiz' && artifactData.type !== 'flashcards')) && (
                   <div className="flex flex-col gap-4">
                     <div className="flex items-center justify-between pb-3 border-b border-white/10">
                       <span className="text-xs font-semibold text-amber-400 flex items-center gap-1.5">
@@ -429,7 +530,7 @@ export default function StudioTab({ transcriptionList, activeId, active }: Studi
                         <button
                           type="button"
                           className="px-3 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-xs font-medium cursor-pointer flex items-center gap-1.5"
-                          onClick={() => handleSaveToNotebook(`Studio: ${getToolLabel(activeArtifactType)}`, artifactData.content)}
+                          onClick={handleSaveMarkdownArtifactToNotebook}
                         >
                           <i className="fa-solid fa-bookmark"></i> Guardar en Cuaderno
                         </button>
@@ -462,29 +563,40 @@ export default function StudioTab({ transcriptionList, activeId, active }: Studi
                         <p className="text-xs text-zinc-400 mt-0.5">Selecciona tus respuestas y evalúa tu nivel de conocimiento.</p>
                       </div>
 
-                      {showQuizResults ? (
-                        <div className="flex items-center gap-3">
-                          <span className="px-3 py-1 rounded-lg bg-amber-500 text-zinc-950 font-bold text-xs">
-                            Puntuación: {calculateScore(artifactData.data)} / {artifactData.data.length} ({Math.round((calculateScore(artifactData.data) / artifactData.data.length) * 100)}%)
-                          </span>
-                          <button
-                            type="button"
-                            className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-white text-xs cursor-pointer"
-                            onClick={() => { setUserAnswers({}); setShowQuizResults(false); }}
-                          >
-                            <i className="fa-solid fa-rotate-left"></i> Reiniciar Examen
-                          </button>
-                        </div>
-                      ) : (
+                      <div className="flex items-center gap-2">
                         <button
                           type="button"
-                          className="px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs cursor-pointer shadow-lg shadow-purple-500/20"
-                          onClick={() => setShowQuizResults(true)}
-                          disabled={Object.keys(userAnswers).length === 0}
+                          className="px-3 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 font-medium text-xs cursor-pointer flex items-center gap-1.5 transition-colors"
+                          onClick={handleSaveQuizToNotebook}
+                          title="Guardar este examen interactivo en el Cuaderno de Notas"
                         >
-                          <i className="fa-solid fa-check-double"></i> Calificar Examen
+                          <i className="fa-solid fa-bookmark text-amber-400"></i> Guardar en Cuaderno
                         </button>
-                      )}
+
+                        {showQuizResults ? (
+                          <div className="flex items-center gap-3">
+                            <span className="px-3 py-1 rounded-lg bg-amber-500 text-zinc-950 font-bold text-xs">
+                              Puntuación: {calculateScore(artifactData.data)} / {artifactData.data.length} ({Math.round((calculateScore(artifactData.data) / artifactData.data.length) * 100)}%)
+                            </span>
+                            <button
+                              type="button"
+                              className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-white text-xs cursor-pointer"
+                              onClick={() => { setUserAnswers({}); setShowQuizResults(false); }}
+                            >
+                              <i className="fa-solid fa-rotate-left"></i> Reiniciar Examen
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            className="px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs cursor-pointer shadow-lg shadow-purple-500/20"
+                            onClick={() => setShowQuizResults(true)}
+                            disabled={Object.keys(userAnswers).length === 0}
+                          >
+                            <i className="fa-solid fa-check-double"></i> Calificar Examen
+                          </button>
+                        )}
+                      </div>
                     </div>
 
                     <div className="flex flex-col gap-5">
@@ -543,12 +655,30 @@ export default function StudioTab({ transcriptionList, activeId, active }: Studi
                 {/* Interactive 3D Flashcards Player */}
                 {artifactData.type === 'flashcards' && Array.isArray(artifactData.data) && artifactData.data.length > 0 && (
                   <div className="flex flex-col items-center gap-6 py-4">
-                    <div className="w-full flex items-center justify-between pb-3 border-b border-white/10">
+                    <div className="w-full flex items-center justify-between pb-3 border-b border-white/10 flex-wrap gap-2">
                       <h3 className="text-base font-semibold text-white flex items-center gap-2">
                         <i className="fa-solid fa-clone text-pink-400"></i>
                         Tarjetas de Estudio 3D ({currentCardIndex + 1} de {artifactData.data.length})
                       </h3>
-                      <span className="text-xs text-zinc-400">Haz clic en la tarjeta para voltearla</span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          className="px-3 py-1.5 rounded-lg bg-pink-500/15 hover:bg-pink-500/25 border border-pink-500/30 text-pink-300 font-medium text-xs cursor-pointer flex items-center gap-1.5 transition-colors"
+                          onClick={handleExportFlashcardsCSV}
+                          title="Exportar esta colección de tarjetas 3D a un archivo CSV"
+                        >
+                          <i className="fa-solid fa-file-csv text-pink-400"></i> Exportar a CSV
+                        </button>
+                        <button
+                          type="button"
+                          className="px-3 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 font-medium text-xs cursor-pointer flex items-center gap-1.5 transition-colors"
+                          onClick={handleSaveFlashcardsToNotebook}
+                          title="Guardar esta colección de tarjetas 3D en el Cuaderno de Notas"
+                        >
+                          <i className="fa-solid fa-bookmark text-amber-400"></i> Guardar en Cuaderno
+                        </button>
+                        <span className="text-xs text-zinc-400">Haz clic en la tarjeta para voltearla</span>
+                      </div>
                     </div>
 
                     {/* 3D Flip Card */}

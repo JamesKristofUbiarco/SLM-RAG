@@ -24,6 +24,9 @@ export default function App() {
   // Path redirected from YouTube tab to Transcripción
   const [pendingTranscribePath, setPendingTranscribePath] = useState<string | null>(null);
 
+  // Resume item redirected from Sources/Notebook tab to Studio Hub
+  const [pendingStudioResume, setPendingStudioResume] = useState<any>(null);
+
   // Server hardware monitor states
   const [serverStatus, setServerStatus] = useState<boolean>(false);
   const [gpuName, setGpuName] = useState<string>('');
@@ -210,6 +213,8 @@ export default function App() {
           transcriptionList={transcriptionList}
           activeId={activeTranscriptionId}
           active={activeTab === 'studio-tab'}
+          pendingResume={pendingStudioResume}
+          onClearPendingResume={() => setPendingStudioResume(null)}
         />
 
         <ChatTab 
@@ -231,6 +236,10 @@ export default function App() {
         <SourcesTab 
           transcriptionList={transcriptionList}
           onRefresh={loadTranscriptions}
+          onResumeInStudio={(payload) => {
+            setPendingStudioResume(payload);
+            setActiveTab('studio-tab');
+          }}
           active={activeTab === 'sources-tab'}
         />
 
