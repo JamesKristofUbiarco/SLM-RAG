@@ -7,7 +7,7 @@ import time
 import datetime
 import uuid
 import json
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 from pydantic import BaseModel
 from fastapi import FastAPI, UploadFile, File, Form, Query, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse, HTMLResponse
@@ -20,6 +20,16 @@ from pathlib import Path
 BACKEND_DIR = Path(__file__).parent
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
+
+# Auto-configure CPATH for GCC runtime compilation of CUDA/C extensions (e.g. Python.h)
+try:
+    uv_pythons = list(Path.home().glob(".local/share/uv/python/*/include/python*"))
+    valid_inc_paths = [str(p) for p in uv_pythons if (p / "Python.h").exists()]
+    if valid_inc_paths:
+        current_cpath = os.environ.get("CPATH", "")
+        os.environ["CPATH"] = os.pathsep.join(valid_inc_paths + ([current_cpath] if current_cpath else []))
+except Exception:
+    pass
 
 from config import settings
 from database import get_db, init_db
@@ -177,18 +187,23 @@ async def transcribe(
     background_tasks: BackgroundTasks,
     file: Optional[UploadFile] = File(None),
     filePath: Optional[str] = Form(None), # Allow transcribing directly from local filesystem paths (useful for large files!)
+    file_path: Optional[str] = Form(None), # Support snake_case parameter from frontend
     backend: str = Form("whisperx"),
     model_name: Optional[str] = Form(None),
     language: Optional[str] = Form(None),
     align: bool = Form(True),
     diarize: bool = Form(False),
-    hf_token: Optional[str] = Form(None)
+    hf_token: Optional[str] = Form(None),
+    min_speakers: Optional[int] = Form(None),
+    max_speakers: Optional[int] = Form(None)
 ):
     """
     Transcribe audio/video file.
     Can accept either a file upload, or a direct filePath on local disk.
     Saves metadata to SQLite, then launches background RAG indexing and summarization.
     """
+    filePath = filePath or file_path
+
     logger.info("Transcribe request received. Requesting Ollama to unload model and clearing VRAM...")
     try:
         rag_service.unload_model()
@@ -215,7 +230,23 @@ async def transcribe(
     
     if filePath:
         # User passed a local filesystem path
-        local_path = Path(filePath).resolve()
+        local_path = Path(filePath)
+        if not local_path.is_absolute():
+            if (BACKEND_DIR / local_path).exists():
+                local_path = (BACKEND_DIR / local_path).resolve()
+            elif (BASE_DIR / local_path).exists():
+                local_path = (BASE_DIR / local_path).resolve()
+            elif filePath.startswith("uploads/"):
+                cand = (BACKEND_DIR / "uploads" / filePath[len("uploads/"):]).resolve()
+                if cand.exists():
+                    local_path = cand
+                else:
+                    local_path = (BASE_DIR / local_path).resolve()
+            else:
+                local_path = (BASE_DIR / local_path).resolve()
+        else:
+            local_path = local_path.resolve()
+
         if not local_path.exists():
             raise HTTPException(status_code=400, detail=f"El archivo local especificado no existe: {filePath}")
         temp_filepath = local_path
@@ -288,8 +319,8 @@ async def transcribe(
             
     if needs_conversion:
         ext = ".mp3"
-        codec_args = ["-acodec", "libmp3lame", "-ab", "128k"]
-        logger.info(f"Audio/Video conversion needed for: {original_filename}. Extracting/converting to MP3...")
+        codec_args = ["-acodec", "libmp3lame", "-ab", "320k"]
+        logger.info(f"Audio/Video conversion needed for: {original_filename}. Extracting/converting to high-fidelity 320kbps MP3...")
         
         if filePath:
             # For local files, create target audio file in the upload directory
@@ -310,8 +341,7 @@ async def transcribe(
             "-i", str(temp_filepath),
             "-vn",
             *codec_args,
-            "-ar", "16000",
-            "-ac", "1",
+            "-ar", "44100",
             str(audio_filepath)
         ]
         
@@ -362,7 +392,9 @@ async def transcribe(
             language=language,
             align=align,
             diarize=diarize,
-            hf_token_override=hf_token
+            hf_token_override=hf_token,
+            min_speakers=min_speakers,
+            max_speakers=max_speakers
         )
         
         total_words = result["metrics"]["total_words"]
@@ -373,14 +405,21 @@ async def transcribe(
         
         segments_json = json.dumps(result["segments"])
         
-        # Convert media filepath to a relative path if it resides in the uploads directory
+        # Convert media filepath to a relative path relative to BASE_DIR for DB
         try:
             db_path = Path(media_filepath_for_db)
-            uploads_dir = Path(settings.upload_dir).resolve()
-            if db_path.is_absolute() and db_path.resolve().is_relative_to(uploads_dir):
-                media_filepath_for_db = str(db_path.resolve().relative_to(BASE_DIR.resolve()))
-            elif not db_path.is_absolute() and (BASE_DIR / db_path).resolve().is_relative_to(uploads_dir):
-                media_filepath_for_db = str((BASE_DIR / db_path).resolve().relative_to(BASE_DIR.resolve()))
+            if not db_path.is_absolute():
+                if (BACKEND_DIR / db_path).exists():
+                    db_path = (BACKEND_DIR / db_path).resolve()
+                elif (BASE_DIR / db_path).exists():
+                    db_path = (BASE_DIR / db_path).resolve()
+                else:
+                    db_path = db_path.resolve()
+            else:
+                db_path = db_path.resolve()
+
+            if db_path.is_relative_to(BASE_DIR.resolve()):
+                media_filepath_for_db = str(db_path.relative_to(BASE_DIR.resolve()))
         except Exception as e:
             logger.warning(f"Failed to convert filepath to relative format: {e}")
             
@@ -463,6 +502,13 @@ async def transcribe(
                 logger.warning(f"Failed to clean up file {temp_filepath} on failure: {str(cleanup_err)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/transcribe/abort")
+async def abort_transcription():
+    """Abort the current running transcription process."""
+    whisper_service.abort_requested = True
+    logger.info("User requested transcription abort.")
+    return {"status": "Abort requested"}
+
 @app.get("/api/media")
 async def get_media_file(path: str):
     """
@@ -471,16 +517,35 @@ async def get_media_file(path: str):
     """
     media_path = Path(path)
     if not media_path.is_absolute():
-        media_path = (BASE_DIR / media_path).resolve()
+        cand1 = (BACKEND_DIR / media_path).resolve()
+        cand2 = (BASE_DIR / media_path).resolve()
+        if cand1.exists() and cand1.is_file():
+            media_path = cand1
+        elif cand2.exists() and cand2.is_file():
+            media_path = cand2
+        elif path.startswith("uploads/"):
+            cand3 = (BACKEND_DIR / "uploads" / path[len("uploads/"):]).resolve()
+            if cand3.exists() and cand3.is_file():
+                media_path = cand3
+            else:
+                media_path = cand2
+        else:
+            media_path = cand2
     else:
         media_path = media_path.resolve()
         
     # Security: Path Traversal Prevention
     # Verify that this file is registered in the database for a valid transcription record
+    alt_path_1 = str(media_path.relative_to(BASE_DIR)) if media_path.is_relative_to(BASE_DIR) else str(media_path)
+    alt_path_2 = str(media_path.relative_to(BACKEND_DIR)) if media_path.is_relative_to(BACKEND_DIR) else str(media_path)
+    alt_path_3 = f"uploads/{media_path.name}"
+    alt_path_4 = f"uploads/youtube/{media_path.name}"
+
     with get_db() as conn:
         exists = conn.execute(
-            "SELECT 1 FROM transcriptions WHERE filepath = ? OR filepath = ? LIMIT 1",
-            (path, str(media_path))
+            """SELECT 1 FROM transcriptions 
+               WHERE filepath = ? OR filepath = ? OR filepath = ? OR filepath = ? OR filepath = ? OR filepath = ? LIMIT 1""",
+            (path, str(media_path), alt_path_1, alt_path_2, alt_path_3, alt_path_4)
         ).fetchone()
         
     if not exists:
@@ -598,11 +663,14 @@ async def prune_orphaned_media():
     }
 
 @app.post("/api/media/concat")
+@app.post("/api/transcribe/concat")
 async def concat_media_files(
     files: List[UploadFile] = File(...),
 ):
     """
     Concatenate multiple uploaded audio/video files into a single MP3 file.
+    Extracts intermediate 16kHz WAV streams for all parts to guarantee 100% full duration concatenation.
+    Formats output filename as concat_stems.mp3.
     """
     if len(files) < 2:
         raise HTTPException(status_code=400, detail="Debes subir al menos 2 archivos para concatenar.")
@@ -610,78 +678,81 @@ async def concat_media_files(
     temp_dir = Path(settings.upload_dir)
     temp_dir.mkdir(exist_ok=True)
     
-    saved_paths = []
+    scripts_dir = Path(sys.executable).parent
+    ffmpeg_exe = scripts_dir / "ffmpeg"
+    ffmpeg_cmd_base = str(ffmpeg_exe) if ffmpeg_exe.exists() else "ffmpeg"
+
+    saved_raw_paths = []
+    wav_paths = []
     try:
-        # Save all uploaded parts to temporary files
+        # 1. Save uploaded parts and extract intermediate uniform audio WAV files (16kHz 1-channel PCM)
+        import re
+        stems = []
         for idx, file in enumerate(files):
-            # Safe filename
-            safe_name = f"part_{idx}_{os.urandom(4).hex()}_{file.filename}"
-            part_path = temp_dir / safe_name
-            with part_path.open("wb") as buffer:
+            stem = Path(file.filename).stem
+            safe_st = re.sub(r'[^\w\s-]', '', stem).strip()
+            safe_st = re.sub(r'[-\s]+', '_', safe_st)
+            if safe_st:
+                stems.append(safe_st)
+
+            raw_path = temp_dir / f"raw_part_{idx}_{os.urandom(4).hex()}_{file.filename}"
+            with raw_path.open("wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)
-            saved_paths.append(part_path)
+            saved_raw_paths.append(raw_path)
+
+            wav_path = temp_dir / f"extracted_{idx}_{os.urandom(4).hex()}.wav"
+            wav_cmd = [
+                ffmpeg_cmd_base, "-y",
+                "-i", str(raw_path),
+                "-vn",
+                "-ar", "44100",
+                str(wav_path)
+            ]
+            logger.info(f"Extracting intermediate WAV for part {idx}: {' '.join(wav_cmd)}")
+            res = subprocess.run(wav_cmd, capture_output=True, text=True)
+            if res.returncode != 0:
+                raise Exception(f"Error al extraer audio de parte {idx} ({file.filename}): {res.stderr}")
+            wav_paths.append(wav_path)
             
-        # Create the ffmpeg concat file list
-        # FFmpeg concat demuxer format requires: file 'path'
+        # 2. Build multi-part safe combined filename
+        if not stems:
+            combined_stem = os.urandom(4).hex()
+        elif len(stems) <= 3:
+            combined_stem = "_".join(stems)
+        else:
+            combined_stem = "_".join(stems[:3]) + f"_y_{len(stems)-3}_mas"
+            
+        output_filename = f"concat_{combined_stem}.mp3"
+        output_filepath = temp_dir / output_filename
+
+        # 3. Create the FFmpeg concat demuxer list pointing to uniform WAV files
         concat_list_path = temp_dir / f"concat_list_{os.urandom(8).hex()}.txt"
         with concat_list_path.open("w", encoding="utf-8") as f:
-            for path in saved_paths:
-                # Use absolute resolved path to avoid FFmpeg safe path errors
-                f.write(f"file '{path.resolve()}'\n")
-                
-        # Define output path
-        import re
-        first_file_stem = Path(files[0].filename).stem
-        safe_stem = re.sub(r'[^\w\s-]', '', first_file_stem).strip()
-        safe_stem = re.sub(r'[-\s]+', '_', safe_stem)
-        if not safe_stem:
-            safe_stem = f"unified_{os.urandom(4).hex()}"
-        output_filename = f"concat_{safe_stem}.mp3"
-        output_filepath = temp_dir / output_filename
-        
-        # FFmpeg command using concat demuxer
-        scripts_dir = Path(sys.executable).parent
-        ffmpeg_exe = scripts_dir / "ffmpeg"
-        ffmpeg_cmd_base = str(ffmpeg_exe) if ffmpeg_exe.exists() else "ffmpeg"
-        
-        # We use -c copy to instantly concatenate without transcoding
-        ffmpeg_cmd = [
-            ffmpeg_cmd_base,
-            "-y",
+            for wpath in wav_paths:
+                f.write(f"file '{wpath.resolve()}'\n")
+
+        # 4. Concatenate intermediate WAVs into final high-fidelity 320k MP3
+        concat_cmd = [
+            ffmpeg_cmd_base, "-y",
             "-f", "concat",
             "-safe", "0",
             "-i", str(concat_list_path),
-            "-c", "copy",
+            "-acodec", "libmp3lame",
+            "-ab", "320k",
+            "-ar", "44100",
             str(output_filepath)
         ]
-        
-        logger.info(f"Running FFmpeg concat command: {' '.join(ffmpeg_cmd)}")
-        result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
-        
-        if result.returncode != 0:
-            # Fallback: if codec copy fails (e.g. codecs/sample rates mismatch), we transcode to MP3
-            logger.warning("FFmpeg stream copy concatenation failed. Retrying with transcoding...")
-            ffmpeg_cmd_transcode = [
-                ffmpeg_cmd_base,
-                "-y",
-                "-f", "concat",
-                "-safe", "0",
-                "-i", str(concat_list_path),
-                "-acodec", "libmp3lame",
-                "-ab", "128k",
-                "-ar", "16000",
-                "-ac", "1",
-                str(output_filepath)
-            ]
-            logger.info(f"Running FFmpeg transcode concat command: {' '.join(ffmpeg_cmd_transcode)}")
-            trans_result = subprocess.run(ffmpeg_cmd_transcode, capture_output=True, text=True)
-            if trans_result.returncode != 0:
-                raise Exception(f"FFmpeg concat failed: {trans_result.stderr}")
+        logger.info(f"Running final FFmpeg concat command: {' '.join(concat_cmd)}")
+        concat_res = subprocess.run(concat_cmd, capture_output=True, text=True)
+        if concat_res.returncode != 0:
+            raise Exception(f"FFmpeg concat failed: {concat_res.stderr}")
                 
-        # Clean up temporary parts and the list file
+        # Clean up temporary raw files, WAV files and the list file
         concat_list_path.unlink(missing_ok=True)
-        for part_path in saved_paths:
-            part_path.unlink(missing_ok=True)
+        for raw_p in saved_raw_paths:
+            raw_p.unlink(missing_ok=True)
+        for wav_p in wav_paths:
+            wav_p.unlink(missing_ok=True)
             
         # Store as relative path
         rel_output_path = str(output_filepath.resolve().relative_to(BASE_DIR.resolve()))
@@ -689,14 +760,17 @@ async def concat_media_files(
         return {
             "status": "success",
             "filename": f"Concatenado ({len(files)} partes)",
-            "filepath": rel_output_path
+            "filepath": rel_output_path,
+            "concat_path": rel_output_path
         }
         
     except Exception as e:
         logger.error(f"Error during audio concatenation: {str(e)}")
         # Clean up in case of failure
-        for part_path in saved_paths:
-            part_path.unlink(missing_ok=True)
+        for raw_p in saved_raw_paths:
+            raw_p.unlink(missing_ok=True)
+        for wav_p in wav_paths:
+            wav_p.unlink(missing_ok=True)
         raise HTTPException(status_code=500, detail=f"Error al concatenar audios: {str(e)}")
 
 # ── YouTube Audio Extraction Endpoints ─────────────────────────────────────
@@ -790,7 +864,7 @@ def download_youtube_audio_sync(url: str) -> dict:
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
-                'preferredquality': '192',
+                'preferredquality': '320',
             }],
             'quiet': True,
             'no_warnings': True,
@@ -1190,6 +1264,25 @@ async def update_source_location(id: int, payload: UpdateSourceLocationPayload):
         conn.commit()
     return {"status": "updated", "id": id, "project_id": payload.project_id, "folder_id": payload.folder_id}
 
+class BatchMovePayload(BaseModel):
+    transcription_ids: List[int]
+    project_id: Optional[int] = None
+    folder_id: Optional[int] = None
+
+@app.post("/api/transcriptions/move")
+async def batch_move_sources(payload: BatchMovePayload):
+    """Move multiple sources/transcriptions into a target project and/or folder."""
+    if not payload.transcription_ids:
+        return {"status": "success", "count": 0}
+        
+    with get_db() as conn:
+        placeholders = ",".join(["?"] * len(payload.transcription_ids))
+        query = f"UPDATE transcriptions SET project_id = ?, folder_id = ? WHERE id IN ({placeholders})"
+        conn.execute(query, [payload.project_id, payload.folder_id] + payload.transcription_ids)
+        conn.commit()
+        
+    return {"status": "success", "count": len(payload.transcription_ids)}
+
 @app.get("/api/semantic_search")
 async def semantic_search(
     query: str,
@@ -1323,7 +1416,7 @@ async def ingest_text_file(file: UploadFile = File(...)):
 
 class IngestWebUrlPayload(BaseModel):
     url: Optional[str] = None
-    urls: Optional[str] = None
+    urls: Optional[Union[str, List[str]]] = None
     project_id: Optional[int] = None
     folder_id: Optional[int] = None
 
@@ -1335,8 +1428,11 @@ async def ingest_web_url(payload: IngestWebUrlPayload):
     """
     target_urls = []
     if payload.urls:
-        lines = [line.strip() for line in payload.urls.replace(",", "\n").split("\n")]
-        target_urls = [u for u in lines if u]
+        if isinstance(payload.urls, list):
+            target_urls = [u.strip() for u in payload.urls if isinstance(u, str) and u.strip()]
+        else:
+            lines = [line.strip() for line in payload.urls.replace(",", "\n").split("\n")]
+            target_urls = [u for u in lines if u]
     elif payload.url and payload.url.strip():
         target_urls = [payload.url.strip()]
 
@@ -1475,7 +1571,11 @@ async def get_transcription_details(id: int):
         summary_row = conn.execute("SELECT text, mode FROM summaries WHERE transcription_id = ?", (id,)).fetchone()
         
     summary = summary_row["text"] if summary_row else None
-    summary_mode = summary_row["mode"] if (summary_row and "mode" in summary_row.keys() and summary_row["mode"]) else "meeting"
+    
+    filename = row["filename"] or ""
+    is_doc = any(filename.lower().endswith(ext) for ext in [".pdf", ".docx", ".txt", ".md", ".csv", ".json"]) or filename.startswith("web_")
+    default_mode = "web_digest" if filename.startswith("web_") else ("doc_executive" if is_doc else "meeting")
+    summary_mode = summary_row["mode"] if (summary_row and "mode" in summary_row.keys() and summary_row["mode"]) else default_mode
     
     return {
         "id": row["id"],
@@ -1531,11 +1631,16 @@ async def trigger_summarization(id: int, background_tasks: BackgroundTasks, forc
 async def get_transcription_summary(id: int):
     """Retrieve LLM executive summary for a transcription."""
     with get_db() as conn:
+        t_row = conn.execute("SELECT filename FROM transcriptions WHERE id = ?", (id,)).fetchone()
         row = conn.execute("SELECT text, mode FROM summaries WHERE transcription_id = ?", (id,)).fetchone()
     if not row:
         return {"summary": None, "mode": None, "status": "Resumen no disponible o aún generándose en segundo plano."}
     
-    summary_mode = row["mode"] if "mode" in row.keys() else "meeting"
+    filename = t_row["filename"] if t_row else ""
+    is_doc = any(filename.lower().endswith(ext) for ext in [".pdf", ".docx", ".txt", ".md", ".csv", ".json"]) or filename.startswith("web_")
+    default_mode = "web_digest" if filename.startswith("web_") else ("doc_executive" if is_doc else "meeting")
+    
+    summary_mode = row["mode"] if ("mode" in row.keys() and row["mode"]) else default_mode
     return {"summary": row["text"], "mode": summary_mode, "status": "completed"}
 
 # --- Chat Sessions Endpoints ---
@@ -1581,6 +1686,39 @@ async def create_chat_session(payload: CreateChatSessionPayload):
         conn.commit()
         
     return {"id": session_id, "title": title, "context_sources": sources}
+
+@app.get("/api/chat/sessions/{session_id}")
+async def get_chat_session_details(session_id: str):
+    """Retrieve full details of a specific chat session including all historical messages."""
+    with get_db() as conn:
+        session_row = conn.execute(
+            "SELECT id, title, context_sources, created_at FROM chat_sessions WHERE id = ?",
+            (session_id,)
+        ).fetchone()
+
+        if not session_row:
+            raise HTTPException(status_code=404, detail="Sesión de chat no encontrada.")
+
+        history_rows = conn.execute(
+            "SELECT role, text FROM chat_history WHERE session_id = ? ORDER BY id ASC",
+            (session_id,)
+        ).fetchall()
+
+    messages = [{"role": r["role"], "content": r["text"]} for r in history_rows]
+
+    source_ids = []
+    context_sources = session_row["context_sources"] or ""
+    if context_sources and context_sources not in ["no_sources", "web_only"]:
+        source_ids = [int(x.strip()) for x in context_sources.split(",") if x.strip().isdigit()]
+
+    return {
+        "id": session_row["id"],
+        "title": session_row["title"],
+        "context_sources": context_sources,
+        "source_ids": source_ids,
+        "created_at": session_row["created_at"],
+        "messages": messages
+    }
 
 @app.delete("/api/chat/sessions/{session_id}")
 async def delete_chat_session(session_id: str):
@@ -1667,58 +1805,72 @@ async def import_chat_session(payload: ImportChatSessionPayload):
 # --- Web Search RAG & Promotion Endpoints ---
 
 class PromoteWebSourcePayload(BaseModel):
-    url: str
+    url: Optional[str] = None
+    urls: Optional[List[str]] = None
     project_id: Optional[int] = None
     folder_id: Optional[int] = None
 
 @app.post("/api/web/promote_to_source")
+@app.post("/api/web/ingest")
 async def promote_web_source(payload: PromoteWebSourcePayload):
     """
-    Permanently saves a web page as an ingested source in SQLite,
+    Permanently saves web page(s) as ingested source(s) in SQLite,
     extracting full clean Markdown with Docling and creating vector chunks.
     """
-    if not payload.url or not payload.url.strip():
-        raise HTTPException(status_code=400, detail="Se requiere una URL válida.")
+    target_urls = []
+    if payload.url and payload.url.strip():
+        target_urls.append(payload.url.strip())
+    if payload.urls:
+        for u in payload.urls:
+            if u and u.strip() and u.strip() not in target_urls:
+                target_urls.append(u.strip())
+                
+    if not target_urls:
+        raise HTTPException(status_code=400, detail="Se requiere al menos una URL válida.")
 
     import web_ingester
 
-    parsed_data = await run_in_threadpool(web_ingester.extract_web_page, payload.url.strip())
-    
-    upload_dir = Path(settings.upload_dir)
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    saved_file_path = upload_dir / parsed_data["filename"]
-    
-    with open(saved_file_path, "w", encoding="utf-8") as f:
-        f.write(parsed_data["text"])
+    last_id = None
+    last_filename = ""
+    for target_url in target_urls:
+        parsed_data = await run_in_threadpool(web_ingester.extract_web_page, target_url)
+        
+        upload_dir = Path(settings.upload_dir)
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        saved_file_path = upload_dir / parsed_data["filename"]
+        last_filename = parsed_data["filename"]
+        
+        with open(saved_file_path, "w", encoding="utf-8") as f:
+            f.write(parsed_data["text"])
 
-    rel_filepath = str(saved_file_path.relative_to(BASE_DIR)) if saved_file_path.is_relative_to(BASE_DIR) else str(saved_file_path)
+        rel_filepath = str(saved_file_path.relative_to(BASE_DIR)) if saved_file_path.is_relative_to(BASE_DIR) else str(saved_file_path)
 
-    segments = [{"start": 0.0, "end": 0.0, "text": parsed_data["text"]}]
+        segments = [{"start": 0.0, "end": 0.0, "text": parsed_data["text"]}]
 
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO transcriptions (filename, filepath, text, segments_json, project_id, folder_id) VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                parsed_data["filename"],
-                rel_filepath,
-                parsed_data["text"],
-                json.dumps(segments),
-                payload.project_id,
-                payload.folder_id
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO transcriptions (filename, filepath, text, segments_json, project_id, folder_id) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    parsed_data["filename"],
+                    rel_filepath,
+                    parsed_data["text"],
+                    json.dumps(segments),
+                    payload.project_id,
+                    payload.folder_id
+                )
             )
-        )
-        transcription_id = cursor.lastrowid
-        conn.commit()
+            last_id = cursor.lastrowid
+            conn.commit()
 
-    await run_in_threadpool(rag_service.store_chunks, transcription_id, parsed_data["text"])
+        if last_id:
+            await run_in_threadpool(rag_service.store_chunks, last_id, parsed_data["text"])
 
     return {
         "status": "success",
-        "id": transcription_id,
-        "filename": parsed_data["filename"],
-        "title": parsed_data["title"],
-        "message": f"Fuente web '{parsed_data['title']}' guardada permanentemente en el proyecto."
+        "transcription_id": last_id,
+        "filename": last_filename,
+        "count": len(target_urls)
     }
 
 class ChatPayload(BaseModel):
@@ -1782,8 +1934,11 @@ async def chat_interaction(payload: ChatPayload):
     logger.info(f"Chat interaction [{mode}] for session [{active_session_id}]: '{message_str}'")
 
     local_context = ""
+    citations = []
     if mode in ["local", "hybrid"] and target_ids:
-        local_context = rag_service.get_context(message_str, target_ids, top_k=6)
+        local_res = rag_service.get_context_with_citations(message_str, target_ids, top_k=6)
+        local_context = local_res["context_text"]
+        citations = local_res["citations"]
 
     web_context = ""
     web_sources = []
@@ -1849,6 +2004,7 @@ async def chat_interaction(payload: ChatPayload):
         "session_id": active_session_id,
         "response": llm_response,
         "answer": llm_response,
+        "citations": citations,
         "context_sources": local_context.split("\n\n---\n\n") if local_context else [],
         "web_sources": web_sources,
         "search_logs": search_logs
@@ -2013,6 +2169,126 @@ async def get_log_details(run_id: str):
             return json.load(f)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read log file: {str(e)}")
+
+# --- Notebook Notes Endpoints ---
+
+class CreateNotePayload(BaseModel):
+    title: Optional[str] = ""
+    content: str
+    source_type: Optional[str] = "user_note"
+
+@app.get("/api/notes")
+async def list_notes():
+    """Retrieve all saved notes from the Notebook."""
+    with get_db() as conn:
+        rows = conn.execute("SELECT id, title, content, source_type, created_at FROM notes ORDER BY created_at DESC").fetchall()
+    return [
+        {
+            "id": r["id"],
+            "title": r["title"],
+            "content": r["content"],
+            "source_type": r["source_type"],
+            "created_at": r["created_at"]
+        }
+        for r in rows
+    ]
+
+@app.post("/api/notes")
+async def create_note(payload: CreateNotePayload):
+    """Save a new note or fragment to the Notebook."""
+    if not payload.content or not payload.content.strip():
+        raise HTTPException(status_code=400, detail="El contenido de la nota no puede estar vacío.")
+    
+    title = payload.title.strip() if payload.title and payload.title.strip() else f"Nota {datetime.datetime.now().strftime('%d/%m %H:%M')}"
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO notes (title, content, source_type) VALUES (?, ?, ?)",
+            (title, payload.content, payload.source_type or "user_note")
+        )
+        new_id = cursor.lastrowid
+        conn.commit()
+
+    return {"status": "success", "id": new_id, "title": title, "content": payload.content}
+
+@app.delete("/api/notes/{id}")
+async def delete_note(id: int):
+    """Delete a note from the Notebook."""
+    with get_db() as conn:
+        conn.execute("DELETE FROM notes WHERE id = ?", (id,))
+        conn.commit()
+    return {"status": "deleted", "id": id}
+
+@app.post("/api/notes/{id}/promote_to_source")
+async def promote_note_to_source(id: int):
+    """
+    Promote a Notebook Note to a permanent RAG Source database entry,
+    generating vector embeddings/chunks for semantic search!
+    """
+    with get_db() as conn:
+        note = conn.execute("SELECT id, title, content FROM notes WHERE id = ?", (id,)).fetchone()
+
+    if not note:
+        raise HTTPException(status_code=404, detail="Nota no encontrada.")
+
+    filename = f"Nota_{note['id']}_{note['title'].replace(' ', '_')[:30]}.txt"
+    upload_dir = Path(settings.upload_dir)
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    saved_file_path = upload_dir / filename
+
+    with open(saved_file_path, "w", encoding="utf-8") as f:
+        f.write(f"# {note['title']}\n\n{note['content']}")
+
+    rel_filepath = str(saved_file_path.relative_to(BASE_DIR)) if saved_file_path.is_relative_to(BASE_DIR) else str(saved_file_path)
+
+    segments = [{"start": 0.0, "end": 0.0, "text": note["content"]}]
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO transcriptions (filename, filepath, text, segments_json) VALUES (?, ?, ?, ?)",
+            (filename, rel_filepath, note["content"], json.dumps(segments))
+        )
+        transcription_id = cursor.lastrowid
+        conn.commit()
+
+    await run_in_threadpool(rag_service.store_chunks, transcription_id, note["content"])
+
+# --- Studio Hub Endpoints ---
+
+class StudioGeneratePayload(BaseModel):
+    artifact_type: str
+    source_ids: List[int]
+    count: Optional[int] = 5
+    difficulty: Optional[str] = "Intermedio"
+    length: Optional[str] = "Estándar"
+    custom_instructions: Optional[str] = ""
+
+@app.post("/api/studio/generate")
+async def generate_studio_artifact(payload: StudioGeneratePayload):
+    """
+    Studio Hub Multi-Source Generator endpoint.
+    Processes N selected source_ids to generate Briefing Docs, FAQs, Timelines, Quizzes, or Flashcards.
+    """
+    if not payload.source_ids:
+        raise HTTPException(status_code=400, detail="Debes seleccionar al menos una fuente para generar contenido en Studio Hub.")
+
+    import studio_service
+    options = {
+        "count": payload.count or 5,
+        "difficulty": payload.difficulty or "Intermedio",
+        "length": payload.length or "Estándar",
+        "custom_instructions": payload.custom_instructions or ""
+    }
+    result = await run_in_threadpool(
+        studio_service.studio_service.generate_artifact,
+        artifact_type=payload.artifact_type,
+        source_ids=payload.source_ids,
+        options=options
+    )
+
+    return result
 
 if __name__ == "__main__":
     import uvicorn

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, ChangeEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Transcription, ChunkItem, Project, Folder } from '../types';
+import { Transcription, ChunkItem, Project, Folder, NoteItem } from '../types';
 import FolderTree from './FolderTree';
 
 interface SourcesTabProps {
@@ -13,6 +13,13 @@ export default function SourcesTab({ transcriptionList, onRefresh, active }: Sou
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
   const [viewMode, setViewMode] = useState<'hierarchy' | 'table'>('hierarchy');
+
+  // Notebook Notes State
+  const [notes, setNotes] = useState<NoteItem[]>([]);
+  const [showCreateNoteModal, setShowCreateNoteModal] = useState<boolean>(false);
+  const [newNoteTitle, setNewNoteTitle] = useState<string>('');
+  const [newNoteContent, setNewNoteContent] = useState<string>('');
+  const [isPromotingNoteId, setIsPromotingNoteId] = useState<number | null>(null);
 
   // Projects & Folders State
   const [projects, setProjects] = useState<Project[]>([]);
@@ -45,6 +52,66 @@ export default function SourcesTab({ transcriptionList, onRefresh, active }: Sou
   // Delete confirmation modal states
   const [deleteConfirmTarget, setDeleteConfirmTarget] = useState<{ ids: number[]; label: string } | null>(null);
 
+  const fetchNotes = async () => {
+    try {
+      const res = await fetch('/api/notes');
+      if (res.ok) {
+        const data = await res.json();
+        setNotes(data || []);
+      }
+    } catch (err) {
+      console.error('Error fetching notes:', err);
+    }
+  };
+
+  const handleCreateNote = async () => {
+    if (!newNoteContent.trim()) return;
+    try {
+      const res = await fetch('/api/notes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: newNoteTitle,
+          content: newNoteContent,
+          source_type: 'user_note'
+        })
+      });
+      if (res.ok) {
+        setNewNoteTitle('');
+        setNewNoteContent('');
+        setShowCreateNoteModal(false);
+        fetchNotes();
+      }
+    } catch (err) {
+      console.error('Error creating note:', err);
+    }
+  };
+
+  const handleDeleteNote = async (id: number) => {
+    try {
+      const res = await fetch(`/api/notes/${id}`, { method: 'DELETE' });
+      if (res.ok) fetchNotes();
+    } catch (err) {
+      console.error('Error deleting note:', err);
+    }
+  };
+
+  const handlePromoteNoteToSource = async (id: number) => {
+    setIsPromotingNoteId(id);
+    try {
+      const res = await fetch(`/api/notes/${id}/promote_to_source`, { method: 'POST' });
+      if (res.ok) {
+        alert('¡Nota convertida a Fuente RAG e indexada correctamente!');
+        if (onRefresh) await onRefresh();
+        fetchProjectsAndFolders();
+      }
+    } catch (err: any) {
+      alert(`Error al promover nota: ${err.message}`);
+    } finally {
+      setIsPromotingNoteId(null);
+    }
+  };
+
   // Fetch Projects and Folders from API
   const fetchProjectsAndFolders = async () => {
     try {
@@ -62,6 +129,7 @@ export default function SourcesTab({ transcriptionList, onRefresh, active }: Sou
   useEffect(() => {
     if (active) {
       fetchProjectsAndFolders();
+      fetchNotes();
       if (onRefresh) onRefresh();
     }
   }, [active]);
@@ -388,173 +456,246 @@ export default function SourcesTab({ transcriptionList, onRefresh, active }: Sou
         <p className="text-sm text-zinc-400">Organiza tus audios, documentos e ingestas web en Proyectos y Carpetas con vista jerárquica.</p>
       </div>
 
-      <div className="p-5 sm:p-6 rounded-xl bg-[#17171c]/75 border border-white/10 backdrop-blur-md shadow-xl flex flex-col gap-4 w-full">
-        {/* Top Actions Bar */}
-        <div className="flex items-center justify-between flex-wrap gap-3 pb-4 border-b border-white/10">
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              type="button"
-              className="px-3.5 py-2 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/35 text-amber-400 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
-              onClick={openCreateProjectModal}
-            >
-              <i className="fa-solid fa-folder-plus"></i> Nuevo Proyecto
-            </button>
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 items-start w-full">
+        {/* Left Column: RAG Sources Management */}
+        <div className="xl:col-span-2 p-5 sm:p-6 rounded-xl bg-[#17171c]/75 border border-white/10 backdrop-blur-md shadow-xl flex flex-col gap-4 w-full">
+          {/* Top Actions Bar */}
+          <div className="flex items-center justify-between flex-wrap gap-3 pb-4 border-b border-white/10">
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                className="px-3.5 py-2 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/35 text-amber-400 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+                onClick={openCreateProjectModal}
+              >
+                <i className="fa-solid fa-folder-plus"></i> Nuevo Proyecto
+              </button>
 
-            {selectedIds.size > 0 && (
-              <>
-                <button
-                  type="button"
-                  className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
-                  onClick={openMoveBatchSourcesModal}
-                >
-                  <i className="fa-solid fa-folder-arrow-up text-amber-400"></i> Mover ({selectedIds.size})
-                </button>
+              {selectedIds.size > 0 && (
+                <>
+                  <button
+                    type="button"
+                    className="px-3 py-2 rounded-lg bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/35 text-purple-300 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+                    onClick={openMoveBatchSourcesModal}
+                  >
+                    <i className="fa-solid fa-arrows-up-down-left-right"></i> Mover ({selectedIds.size})
+                  </button>
 
-                <button
-                  type="button"
-                  className="px-3 py-2 rounded-lg bg-red-500/15 hover:bg-red-500/25 border border-red-500/30 text-red-400 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
-                  disabled={isDeleting}
-                  onClick={promptDeleteSelected}
-                >
-                  {isDeleting ? <i className="fa-solid fa-spinner fa-spin"></i> : <i className="fa-solid fa-trash"></i>}
-                  Eliminar Seleccionados ({selectedIds.size})
-                </button>
-              </>
-            )}
+                  <button
+                    type="button"
+                    className="px-3 py-2 rounded-lg bg-red-500/15 hover:bg-red-500/25 border border-red-500/35 text-red-400 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+                    onClick={promptDeleteSelected}
+                  >
+                    <i className="fa-solid fa-trash"></i> Eliminar ({selectedIds.size})
+                  </button>
+                </>
+              )}
+            </div>
+
+            {/* View Mode Selector */}
+            <div className="flex items-center bg-black/40 p-1 rounded-xl border border-white/10">
+              <button
+                type="button"
+                className={`flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors cursor-pointer ${
+                  viewMode === 'hierarchy'
+                    ? 'bg-amber-500/15 border border-amber-500/35 text-amber-400 font-semibold'
+                    : 'text-zinc-400 hover:text-white hover:bg-white/5 border border-transparent'
+                }`}
+                onClick={() => setViewMode('hierarchy')}
+              >
+                <i className="fa-solid fa-sitemap"></i> Jerárquica
+              </button>
+              <button
+                type="button"
+                className={`flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors cursor-pointer ${
+                  viewMode === 'table'
+                    ? 'bg-amber-500/15 border border-amber-500/35 text-amber-400 font-semibold'
+                    : 'text-zinc-400 hover:text-white hover:bg-white/5 border border-transparent'
+                }`}
+                onClick={() => setViewMode('table')}
+              >
+                <i className="fa-solid fa-table-list"></i> Tabla
+              </button>
+            </div>
           </div>
 
-          {/* View Mode Selector */}
-          <div className="grid grid-cols-2 gap-1 p-1 bg-black/40 border border-white/10 rounded-xl">
-            <button
-              type="button"
-              className={`flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors cursor-pointer ${
-                viewMode === 'hierarchy'
-                  ? 'bg-amber-500/15 border border-amber-500/35 text-amber-400 font-semibold'
-                  : 'text-zinc-400 hover:text-white hover:bg-white/5 border border-transparent'
-              }`}
-              onClick={() => setViewMode('hierarchy')}
-            >
-              <i className="fa-solid fa-sitemap"></i> Vista Jerárquica
-            </button>
-            <button
-              type="button"
-              className={`flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors cursor-pointer ${
-                viewMode === 'table'
-                  ? 'bg-amber-500/15 border border-amber-500/35 text-amber-400 font-semibold'
-                  : 'text-zinc-400 hover:text-white hover:bg-white/5 border border-transparent'
-              }`}
-              onClick={() => setViewMode('table')}
-            >
-              <i className="fa-solid fa-table-list"></i> Vista Tabla
-            </button>
-          </div>
+          {/* View Mode 1: Hierarchy Tree */}
+          {viewMode === 'hierarchy' ? (
+            <FolderTree
+              projects={projects}
+              folders={folders}
+              transcriptions={transcriptionList}
+              selectedSourceIds={selectedIds}
+              onToggleSource={handleToggleRow}
+              onCreateFolder={openCreateFolderModal}
+              onDeleteFolder={handleDeleteFolder}
+              onDeleteProject={handleDeleteProject}
+              onMoveSource={openMoveSourceModal}
+              isManagementMode={true}
+            />
+          ) : (
+            /* View Mode 2: Classic Table */
+            <div className="w-full overflow-x-auto rounded-lg border border-white/10">
+              <table className="w-full min-w-[650px] text-left text-xs border-collapse">
+                <thead className="bg-black/40 text-zinc-400 font-semibold border-b border-white/10">
+                  <tr>
+                    <th className="p-3 w-10">
+                      <input type="checkbox" className="accent-amber-500 rounded" checked={isAllChecked} onChange={handleToggleAll} />
+                    </th>
+                    <th className="p-3">Nombre de Fuente</th>
+                    <th className="p-3">Ubicación</th>
+                    <th className="p-3">Fecha</th>
+                    <th className="p-3">Chunks</th>
+                    <th className="p-3 text-right">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {transcriptionList.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="text-center p-8 text-zinc-500">
+                        No hay fuentes indexadas en el sistema.
+                      </td>
+                    </tr>
+                  ) : (
+                    transcriptionList.map((item) => {
+                      const isChecked = selectedIds.has(item.id);
+                      return (
+                        <tr key={item.id} className={`hover:bg-white/[0.03] transition-colors ${isChecked ? 'bg-indigo-500/10' : ''}`}>
+                          <td className="p-3">
+                            <input type="checkbox" className="accent-amber-500 rounded" checked={isChecked} onChange={() => handleToggleRow(item.id)} />
+                          </td>
+                          <td className="p-3 font-semibold text-white">
+                            <div className="flex items-center gap-2 truncate max-w-[200px]">
+                              <i className="fa-solid fa-file-audio text-amber-500"></i>
+                              <span className="truncate">{item.filename}</span>
+                            </div>
+                          </td>
+                          <td className="p-3 text-zinc-300">
+                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-white/[0.04] border border-white/10 text-[11px] truncate max-w-[150px]">
+                              <i className="fa-solid fa-folder-open text-purple-400"></i>
+                              {getSourceLocationLabel(item)}
+                            </span>
+                          </td>
+                          <td className="p-3 text-zinc-400">
+                            {formatDate(item.created_at)}
+                          </td>
+                          <td className="p-3">
+                            <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-400 text-[11px] font-semibold border border-amber-500/30">
+                              {item.chunk_count || 0}
+                            </span>
+                          </td>
+                          <td className="p-3 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                type="button"
+                                className="px-2 py-1 rounded bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 text-xs cursor-pointer font-medium"
+                                onClick={() => handleOpenInspector(item)}
+                                title="Inspeccionar archivo original y chunks"
+                              >
+                                <i className="fa-solid fa-eye"></i> Inspeccionar
+                              </button>
+                              <button
+                                type="button"
+                                className="px-2 py-1 rounded bg-purple-500/15 hover:bg-purple-500/25 text-purple-300 text-xs cursor-pointer"
+                                onClick={() => openMoveSourceModal(item)}
+                                title="Mover a Proyecto o Carpeta"
+                              >
+                                <i className="fa-solid fa-folder-tree"></i>
+                              </button>
+                              <button
+                                type="button"
+                                className="px-2 py-1 rounded bg-red-500/15 hover:bg-red-500/25 text-red-400 text-xs cursor-pointer"
+                                onClick={() => promptDeleteSingle(item.id, item.filename)}
+                                title="Eliminar fuente"
+                              >
+                                <i className="fa-solid fa-trash"></i>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
-        {/* View Mode 1: Hierarchy Tree */}
-        {viewMode === 'hierarchy' ? (
-          <FolderTree
-            projects={projects}
-            folders={folders}
-            transcriptions={transcriptionList}
-            selectedSourceIds={selectedIds}
-            onToggleSource={handleToggleRow}
-            onCreateFolder={openCreateFolderModal}
-            onDeleteFolder={handleDeleteFolder}
-            onDeleteProject={handleDeleteProject}
-            onMoveSource={openMoveSourceModal}
-            isManagementMode={true}
-          />
-        ) : (
-          /* View Mode 2: Classic Table */
-          <div className="w-full overflow-x-auto rounded-lg border border-white/10">
-            <table className="w-full min-w-[700px] text-left text-xs border-collapse">
-              <thead className="bg-black/40 text-zinc-400 font-semibold border-b border-white/10">
-                <tr>
-                  <th className="p-3 w-10">
-                    <input type="checkbox" className="accent-amber-500 rounded" checked={isAllChecked} onChange={handleToggleAll} />
-                  </th>
-                  <th className="p-3">Nombre de Fuente</th>
-                  <th className="p-3">Ubicación / Proyecto</th>
-                  <th className="p-3">Fecha Ingestión</th>
-                  <th className="p-3">Palabras</th>
-                  <th className="p-3">Chunks</th>
-                  <th className="p-3 text-right">Acciones</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {transcriptionList.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="text-center p-8 text-zinc-500">
-                      No hay fuentes indexadas en el sistema.
-                    </td>
-                  </tr>
-                ) : (
-                  transcriptionList.map((item) => {
-                    const isChecked = selectedIds.has(item.id);
-                    return (
-                      <tr key={item.id} className={`hover:bg-white/[0.03] transition-colors ${isChecked ? 'bg-indigo-500/10' : ''}`}>
-                        <td className="p-3">
-                          <input type="checkbox" className="accent-amber-500 rounded" checked={isChecked} onChange={() => handleToggleRow(item.id)} />
-                        </td>
-                        <td className="p-3 font-semibold text-white">
-                          <div className="flex items-center gap-2">
-                            <i className="fa-solid fa-file-audio text-amber-500"></i>
-                            <span>{item.filename}</span>
-                          </div>
-                        </td>
-                        <td className="p-3 text-zinc-300">
-                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-white/[0.04] border border-white/10 text-[11px]">
-                            <i className="fa-solid fa-folder-open text-purple-400"></i>
-                            {getSourceLocationLabel(item)}
-                          </span>
-                        </td>
-                        <td className="p-3 text-zinc-400">
-                          {formatDate(item.created_at)}
-                        </td>
-                        <td className="p-3 text-zinc-300">
-                          {item.word_count || 0}
-                        </td>
-                        <td className="p-3">
-                          <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-400 text-[11px] font-semibold border border-amber-500/30">
-                            {item.chunk_count || 0} chunks
-                          </span>
-                        </td>
-                        <td className="p-3 text-right">
-                          <div className="flex items-center justify-end gap-1.5">
-                            <button
-                              type="button"
-                              className="px-2.5 py-1 text-xs text-white bg-white/10 hover:bg-white/15 rounded border border-white/10 flex items-center gap-1 cursor-pointer"
-                              onClick={() => openMoveSourceModal(item)}
-                              title="Mover a Proyecto/Carpeta"
-                            >
-                              <i className="fa-solid fa-folder"></i> Mover
-                            </button>
-                            <button
-                              type="button"
-                              className="px-2.5 py-1 text-xs text-white bg-white/10 hover:bg-white/15 rounded border border-white/10 flex items-center gap-1 cursor-pointer"
-                              onClick={() => handleOpenInspector(item)}
-                              title="Inspeccionar tridimensionalmente"
-                            >
-                              <i className="fa-solid fa-eye"></i> Inspeccionar
-                            </button>
-                            <button
-                              type="button"
-                              className="px-2.5 py-1 text-xs text-red-400 bg-red-500/10 hover:bg-red-500/20 rounded border border-red-500/20 flex items-center gap-1 cursor-pointer"
-                              onClick={() => promptDeleteSingle(item.id, item.filename)}
-                              title="Eliminar fuente"
-                            >
-                              <i className="fa-solid fa-trash"></i>
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
+        {/* Right Column: Notebook / Cuaderno de Notas Card */}
+        <div className="p-5 sm:p-6 rounded-xl bg-[#17171c]/75 border border-white/10 backdrop-blur-md shadow-xl flex flex-col gap-4 w-full">
+          <div className="flex items-center justify-between pb-3 border-b border-white/10">
+            <h3 className="text-base font-semibold text-white flex items-center gap-2">
+              <i className="fa-solid fa-book-bookmark text-amber-500"></i>
+              Cuaderno de Notas ({notes.length})
+            </h3>
+            <button
+              type="button"
+              className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-xs flex items-center gap-1.5 cursor-pointer shadow-md shadow-amber-500/20 transition-all"
+              onClick={() => setShowCreateNoteModal(true)}
+            >
+              <i className="fa-solid fa-plus"></i> Nueva Nota
+            </button>
           </div>
-        )}
+
+          <div className="flex flex-col gap-3 max-h-[620px] overflow-y-auto pr-1">
+            {notes.length === 0 ? (
+              <div className="text-center p-8 text-zinc-500 text-xs">
+                <i className="fa-solid fa-note-sticky text-3xl mb-2 block opacity-40 text-amber-500"></i>
+                Tu cuaderno está vacío. Crea notas o guarda fragmentos desde el Chat y los Resúmenes.
+              </div>
+            ) : (
+              notes.map(n => (
+                <div key={n.id} className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 flex flex-col gap-2 transition-all hover:border-amber-500/30">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-white text-xs truncate max-w-[70%]">{n.title}</span>
+                    <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-400 text-[10px] font-semibold border border-amber-500/30">
+                      {n.source_type === 'chat_fragment' ? '💬 Chat' : n.source_type === 'summary_fragment' ? '📄 Resumen' : '📌 Nota'}
+                    </span>
+                  </div>
+
+                  <p className="text-xs text-zinc-300 line-clamp-3 leading-relaxed whitespace-pre-wrap font-sans">
+                    {n.content}
+                  </p>
+
+                  <div className="flex items-center justify-between pt-2 border-t border-white/5 text-[11px]">
+                    <span className="text-zinc-500">{formatDate(n.created_at)}</span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        className="px-2 py-1 rounded bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 font-medium cursor-pointer transition-colors flex items-center gap-1"
+                        onClick={() => handlePromoteNoteToSource(n.id)}
+                        disabled={isPromotingNoteId === n.id}
+                        title="Convertir esta nota en una Fuente RAG indexada"
+                      >
+                        {isPromotingNoteId === n.id ? (
+                          <i className="fa-solid fa-spinner fa-spin"></i>
+                        ) : (
+                          <><i className="fa-solid fa-file-import"></i> ➕ A RAG</>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        className="px-2 py-1 rounded bg-white/10 hover:bg-white/15 text-zinc-300 cursor-pointer"
+                        onClick={() => navigator.clipboard.writeText(n.content)}
+                        title="Copiar texto"
+                      >
+                        <i className="fa-solid fa-copy"></i>
+                      </button>
+                      <button
+                        type="button"
+                        className="px-2 py-1 rounded bg-red-500/10 hover:bg-red-500/20 text-red-400 cursor-pointer"
+                        onClick={() => handleDeleteNote(n.id)}
+                        title="Eliminar nota"
+                      >
+                        <i className="fa-solid fa-trash"></i>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Modal: Create Project */}
@@ -814,6 +955,65 @@ export default function SourcesTab({ transcriptionList, onRefresh, active }: Sou
                 ) : (
                   <><i className="fa-solid fa-trash"></i> Eliminar Definitivamente</>
                 )}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Modal: Create Note */}
+      {showCreateNoteModal && createPortal(
+        <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowCreateNoteModal(false)}>
+          <div className="p-6 rounded-2xl bg-[#17171c] border border-amber-500/40 shadow-2xl max-w-lg w-full flex flex-col gap-4" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between pb-3 border-b border-white/10">
+              <h3 className="text-base font-semibold text-white flex items-center gap-2">
+                <i className="fa-solid fa-book-bookmark text-amber-500"></i>
+                Crear Nueva Nota en el Cuaderno
+              </h3>
+              <button type="button" className="text-zinc-400 hover:text-white" onClick={() => setShowCreateNoteModal(false)}>
+                <i className="fa-solid fa-xmark"></i>
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-3 text-xs">
+              <div className="flex flex-col gap-1">
+                <label className="text-zinc-300 font-medium">Título de la Nota</label>
+                <input
+                  type="text"
+                  className="bg-black/40 border border-white/10 rounded-lg p-2.5 text-white focus:outline-none focus:border-amber-500"
+                  placeholder="Ej. Resumen de ideas sobre la arquitectura RAG"
+                  value={newNoteTitle}
+                  onChange={e => setNewNoteTitle(e.target.value)}
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-zinc-300 font-medium">Contenido / Apuntes (Markdown)</label>
+                <textarea
+                  rows={6}
+                  className="bg-black/40 border border-white/10 rounded-lg p-2.5 text-white font-mono focus:outline-none focus:border-amber-500 resize-none"
+                  placeholder="Escribe tus apuntes, notas o fragmentos..."
+                  value={newNoteContent}
+                  onChange={e => setNewNoteContent(e.target.value)}
+                ></textarea>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2 border-t border-white/10">
+              <button
+                type="button"
+                className="px-3.5 py-2 rounded-lg bg-white/10 text-white text-xs font-medium cursor-pointer"
+                onClick={() => setShowCreateNoteModal(false)}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-xs cursor-pointer transition-colors flex items-center gap-1.5"
+                onClick={handleCreateNote}
+              >
+                <i className="fa-solid fa-floppy-disk"></i> Guardar Nota
               </button>
             </div>
           </div>

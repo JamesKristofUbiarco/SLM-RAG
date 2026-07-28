@@ -80,11 +80,21 @@ export interface WebSource {
   snippet?: string;
 }
 
+export interface CitationItem {
+  num: number;
+  source_id: number;
+  filename: string;
+  chunk_id: number;
+  snippet: string;
+  full_text: string;
+}
+
 export interface Message {
   role: 'user' | 'assistant';
   content: string;
   sources?: SearchResult[] | null;
   web_sources?: WebSource[] | null;
+  citations?: CitationItem[] | null;
   search_logs?: string[] | null;
 }
 
@@ -101,5 +111,13 @@ export interface ChatSession {
   context_sources?: string;
   created_at?: string;
   message_count?: number;
+}
+
+export interface NoteItem {
+  id: number;
+  title: string;
+  content: string;
+  source_type: string;
+  created_at: string;
 }
 

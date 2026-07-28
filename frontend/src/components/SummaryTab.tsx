@@ -34,17 +34,15 @@ export default function SummaryTab({ transcriptionList, activeId, setActiveId, a
     }
   }, [activeId]);
 
-  // Adjust default summary mode based on content type
+  // Sync summaryMode default when selectedId changes if no summary mode exists yet
   useEffect(() => {
     if (selectedItem) {
-      if (isMedia) {
-        if (summaryMode !== 'meeting' && summaryMode !== 'essay' && summaryMode !== 'recipe') {
-          setSummaryMode('meeting');
-        }
-      } else {
-        if (summaryMode !== 'doc_executive' && summaryMode !== 'doc_analysis' && summaryMode !== 'web_digest') {
+      if (!summaryData?.summary_mode) {
+        if (!isMedia) {
           const isWeb = selectedItem.filename?.startsWith('web_');
           setSummaryMode(isWeb ? 'web_digest' : 'doc_executive');
+        } else {
+          setSummaryMode('meeting');
         }
       }
     }
@@ -104,11 +102,12 @@ export default function SummaryTab({ transcriptionList, activeId, setActiveId, a
     }, 4000);
   };
 
-  const handleGenerateSummary = async (force = false) => {
+  const handleGenerateSummary = async (force = false, overrideMode?: SummaryMode) => {
     if (!selectedId) return;
+    const targetMode = overrideMode || summaryMode;
     setIsGenerating(true);
     try {
-      const res = await fetch(`/api/transcriptions/${selectedId}/summarize?force=${force ? 'true' : 'false'}&mode=${summaryMode}`, {
+      const res = await fetch(`/api/transcriptions/${selectedId}/summarize?force=${force ? 'true' : 'false'}&mode=${targetMode}`, {
         method: 'POST'
       });
       if (!res.ok) throw new Error('Error al iniciar la generación de resumen');
@@ -175,20 +174,18 @@ export default function SummaryTab({ transcriptionList, activeId, setActiveId, a
   };
 
   const renderModeOptions = () => {
-    if (isMedia) {
-      return (
-        <>
+    return (
+      <>
+        <optgroup label="--- Documentos y Páginas Web ---">
+          <option value="doc_executive">📄 Síntesis Ejecutiva de Documento</option>
+          <option value="doc_analysis">🔬 Análisis Técnico y Desglose</option>
+          <option value="web_digest">🌐 Resumen Digest / Contenido Web</option>
+        </optgroup>
+        <optgroup label="--- Contenido Multimedia / Audio / Video ---">
           <option value="meeting">📋 Modo Reunión / Minuta</option>
           <option value="essay">📺 Modo Video Ensayo / Conferencia (Tiempos)</option>
           <option value="recipe">🍳 Modo Recetas de Cocina (Ingredientes y Pasos)</option>
-        </>
-      );
-    }
-    return (
-      <>
-        <option value="doc_executive">📄 Síntesis Ejecutiva de Documento</option>
-        <option value="doc_analysis">🔬 Análisis Técnico y Desglose</option>
-        <option value="web_digest">🌐 Resumen Digest / Contenido Web</option>
+        </optgroup>
       </>
     );
   };
@@ -243,7 +240,13 @@ export default function SummaryTab({ transcriptionList, activeId, setActiveId, a
                 <select
                   className="bg-[#1e293b] border border-white/10 rounded-lg text-white px-3 py-2 text-xs font-medium focus:outline-none focus:border-amber-500 transition-colors"
                   value={summaryMode}
-                  onChange={(e) => setSummaryMode(e.target.value as SummaryMode)}
+                  onChange={(e) => {
+                    const newMode = e.target.value as SummaryMode;
+                    setSummaryMode(newMode);
+                    if (summaryData?.summary) {
+                      handleGenerateSummary(true, newMode);
+                    }
+                  }}
                   disabled={isGenerating}
                   title="Selecciona el modo de resumen"
                 >
@@ -251,13 +254,44 @@ export default function SummaryTab({ transcriptionList, activeId, setActiveId, a
                 </select>
 
                 {!isGenerating && (
-                  <button
-                    type="button"
-                    className="px-3.5 py-2 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10 text-white text-xs font-medium flex items-center gap-1.5 cursor-pointer transition-colors"
-                    onClick={() => handleGenerateSummary(true)}
-                  >
-                    <i className="fa-solid fa-arrows-rotate text-amber-400"></i> Regenerar Resumen
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      className="px-3.5 py-2 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10 text-white text-xs font-medium flex items-center gap-1.5 cursor-pointer transition-colors"
+                      onClick={() => handleGenerateSummary(true)}
+                    >
+                      <i className="fa-solid fa-arrows-rotate text-amber-400"></i> Regenerar Resumen
+                    </button>
+                    <button
+                      type="button"
+                      className="px-3.5 py-2 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/35 text-amber-300 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+                      onClick={async () => {
+                        try {
+                          const itemTitle = summaryData?.filename || selectedItem?.filename || 'Fuente';
+                          const res = await fetch('/api/notes', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              title: `Resumen: ${itemTitle} (${getModeLabel(summaryMode)})`,
+                              content: summaryData?.summary || '',
+                              source_type: 'summary_fragment'
+                            })
+                          });
+                          const data = await res.json();
+                          if (res.ok) {
+                            alert('¡Resumen guardado con éxito en tu Cuaderno de Notas!');
+                          } else {
+                            alert(`Error al guardar resumen: ${data.detail || 'Error en servidor'}`);
+                          }
+                        } catch (e: any) {
+                          alert(`Error al guardar resumen en cuaderno: ${e.message}`);
+                        }
+                      }}
+                      title="Guardar este resumen completo en tu Cuaderno de Notas"
+                    >
+                      <i className="fa-solid fa-bookmark text-amber-400"></i> Guardar en Cuaderno
+                    </button>
+                  </>
                 )}
               </div>
             )}

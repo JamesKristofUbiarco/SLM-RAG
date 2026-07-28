@@ -14,23 +14,25 @@ export function isAudioVideoTranscription(item: Transcription): boolean {
   if (!item || !item.filename) return false;
   const name = item.filename.toLowerCase();
 
-  // 1. Check if explicitly ends with a known audio/video extension
+  // 1. Check if explicitly ends with a document / text / web extension or starts with web_
+  if (DOCUMENT_EXTENSIONS.some(ext => name.endsWith(ext)) || name.startsWith('web_') || name.startsWith('http://') || name.startsWith('https://')) {
+    return false;
+  }
+
+  // 2. Check if explicitly ends with a known audio/video extension
   if (AUDIO_VIDEO_EXTENSIONS.some(ext => name.endsWith(ext))) {
     return true;
   }
 
-  // 2. Check if explicitly ends with a document / text / web extension
-  if (DOCUMENT_EXTENSIONS.some(ext => name.endsWith(ext))) {
-    return false;
+  // 3. Fallback: If it has segment data with real audio timestamps > 0
+  if (item.segments && item.segments.length > 0) {
+    const firstSeg = item.segments[0];
+    if (firstSeg && (firstSeg.start > 0 || firstSeg.end > 0)) {
+      return true;
+    }
   }
 
-  // 3. Exclude web ingestion files
-  if (name.startsWith('web_') || name.startsWith('http://') || name.startsWith('https://')) {
-    return false;
-  }
-
-  // 4. Fallback: If it has segment data or no document extension, treat as media transcription
-  return Boolean(item.segments && item.segments.length > 0);
+  return false;
 }
 
 interface TranscriptionHistoryBoxProps {

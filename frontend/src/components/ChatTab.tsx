@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, FormEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { Marked } from 'marked';
-import { Transcription, Message, Project, Folder, ChatSession, WebSource } from '../types';
+import { Transcription, Message, Project, Folder, ChatSession, WebSource, CitationItem } from '../types';
 import FolderTree from './FolderTree';
 
 const marked = new Marked();
@@ -14,7 +14,7 @@ interface ChatTabProps {
 }
 
 export default function ChatTab({ transcriptionList, activeId, setActiveId, active }: ChatTabProps) {
-  // Multi-source selection state (NotebookLM style)
+  // Multi-source selection state
   const [selectedSourceIds, setSelectedSourceIds] = useState<Set<number>>(new Set());
   const [projects, setProjects] = useState<Project[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
@@ -55,6 +55,7 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
   const [inputVal, setInputVal] = useState<string>('');
   const [isTyping, setIsTyping] = useState<boolean>(false);
   const [openedSourcesIdx, setOpenedSourcesIdx] = useState<Record<number, boolean>>({});
+  const [selectedCitation, setSelectedCitation] = useState<CitationItem | null>(null);
 
   const chatBubblesEndRef = useRef<HTMLDivElement>(null);
 
@@ -90,16 +91,12 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
     fetchChatSessions();
   }, [active]);
 
-  // Sync activeId from parent or auto-select all available sources by default
+  // Sync activeId from parent if present (otherwise default to empty selection)
   useEffect(() => {
-    if (selectedSourceIds.size === 0 && transcriptionList.length > 0) {
-      if (activeId) {
-        setSelectedSourceIds(new Set([activeId]));
-      } else {
-        setSelectedSourceIds(new Set(transcriptionList.map(s => s.id)));
-      }
+    if (activeId) {
+      setSelectedSourceIds(new Set([activeId]));
     }
-  }, [activeId, transcriptionList]);
+  }, [activeId]);
 
   // Auto-scroll chat bubbles to bottom
   useEffect(() => {
@@ -395,6 +392,7 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
         content: data.response || data.answer || 'Sin respuesta generada.',
         sources: data.sources || [],
         web_sources: data.web_sources || [],
+        citations: data.citations || [],
         search_logs: data.search_logs || []
       };
 
@@ -413,7 +411,9 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
   const renderMarkdown = (text: string) => {
     if (!text) return { __html: '' };
     marked.use({ breaks: true, gfm: true });
-    const rawHtml = marked.parse(text) as string;
+    let rawHtml = marked.parse(text) as string;
+    // Replace citation tags [1], [2] with stylized inline badge spans
+    rawHtml = rawHtml.replace(/\[(\d+)\]/g, '<span class="inline-flex items-center justify-center px-1.5 py-0.2 mx-0.5 text-[10px] font-bold text-zinc-950 bg-amber-400 rounded-full cursor-pointer hover:bg-amber-300 transition-colors shadow-sm" title="Cita [$1]">$1</span>');
     return { __html: rawHtml };
   };
 
@@ -754,6 +754,57 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
                       </div>
                     )}
 
+                    {/* Clickable Citation Badges */}
+                    {msg.role === 'assistant' && msg.citations && msg.citations.length > 0 && (
+                      <div className="mt-3 pt-2.5 border-t border-white/10 flex flex-col gap-2">
+                        <span className="text-xs font-semibold text-amber-400 flex items-center gap-1.5">
+                          <i className="fa-solid fa-quote-left"></i> Citas de Fuentes ({msg.citations.length}):
+                        </span>
+                        <div className="flex flex-wrap gap-2">
+                          {msg.citations.map((c) => (
+                            <button
+                              key={c.num}
+                              type="button"
+                              className="px-2.5 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/35 text-amber-300 text-xs font-medium flex items-center gap-1.5 cursor-pointer transition-all"
+                              onClick={() => setSelectedCitation(c)}
+                            >
+                              <span className="px-1.5 py-0.5 rounded bg-amber-500 text-zinc-950 font-bold text-[10px]">[{c.num}]</span>
+                              <span className="truncate max-w-[190px]">{c.filename}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Save Fragment to Notebook Button */}
+                    {msg.role === 'assistant' && (
+                      <div className="mt-3 pt-2 border-t border-white/10 flex justify-end">
+                        <button
+                          type="button"
+                          className="px-2.5 py-1 text-xs font-medium text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 rounded-lg border border-amber-500/25 flex items-center gap-1.5 cursor-pointer transition-colors"
+                          onClick={async () => {
+                            try {
+                              const res = await fetch('/api/notes', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  title: `Fragmento Chat: ${msg.content.substring(0, 30)}...`,
+                                  content: msg.content,
+                                  source_type: 'chat_fragment'
+                                })
+                              });
+                              if (res.ok) alert('¡Fragmento guardado con éxito en tu Cuaderno de Notas!');
+                            } catch (e) {
+                              alert('Error al guardar la nota en el cuaderno.');
+                            }
+                          }}
+                          title="Guardar esta respuesta en tu Cuaderno de Notas"
+                        >
+                          <i className="fa-solid fa-bookmark text-amber-400"></i> Guardar en Cuaderno
+                        </button>
+                      </div>
+                    )}
+
                     {/* Local Sources Accordion */}
                     {msg.role === 'assistant' && msg.sources && msg.sources.length > 0 && (
                       <div className="mt-3 pt-2 border-t border-white/10">
@@ -1062,6 +1113,48 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
                   </div>
                 ))
               )}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Citation Inspection Modal */}
+      {selectedCitation && createPortal(
+        <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setSelectedCitation(null)}>
+          <div className="p-6 rounded-2xl bg-[#17171c] border border-amber-500/40 shadow-2xl max-w-2xl w-full flex flex-col gap-4" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between pb-3 border-b border-white/10">
+              <h3 className="text-base font-semibold text-white flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded bg-amber-500 text-zinc-950 font-bold text-xs">[{selectedCitation.num}]</span>
+                {selectedCitation.filename}
+              </h3>
+              <button type="button" className="text-zinc-400 hover:text-white text-lg cursor-pointer" onClick={() => setSelectedCitation(null)}>
+                <i className="fa-solid fa-xmark"></i>
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <span className="text-xs font-medium text-amber-400 flex items-center gap-1">
+                <i className="fa-solid fa-puzzle-piece"></i> Fragmento Vectorial Citado:
+              </span>
+              <div className="p-4 bg-black/50 rounded-xl border border-white/10 font-mono text-xs text-zinc-200 leading-relaxed whitespace-pre-wrap max-h-[350px] overflow-y-auto shadow-inner">
+                "{selectedCitation.full_text}"
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between text-xs text-zinc-400 pt-2 border-t border-white/10">
+              <span>Fuente Local RAG #{selectedCitation.source_id}</span>
+              <button
+                type="button"
+                className="px-3.5 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold cursor-pointer transition-colors flex items-center gap-1.5"
+                onClick={() => {
+                  const sourceId = selectedCitation.source_id;
+                  setSelectedCitation(null);
+                  if (setActiveId && sourceId > 0) setActiveId(sourceId);
+                }}
+              >
+                <i className="fa-solid fa-eye"></i> Ver Fuente Original en Fuentes
+              </button>
             </div>
           </div>
         </div>,

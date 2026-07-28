@@ -137,6 +137,17 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
+        # Notebook Notes table
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            source_type TEXT DEFAULT 'user_note',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+
         conn.commit()
 
 init_db()

@@ -20,6 +20,7 @@ export default function Sidebar({ activeTab, setActiveTab, serverStatus, gpuName
 
   const flatItems = [
     { id: 'summary-tab',  label: 'Resúmenes',         icon: 'fa-file-invoice' },
+    { id: 'studio-tab',   label: 'Studio Hub',         icon: 'fa-wand-magic-sparkles', iconColor: '#f59e0b' },
     { id: 'chat-tab',     label: 'Chat RAG',           icon: 'fa-comments' },
     { id: 'search-tab',   label: 'Búsqueda Semántica', icon: 'fa-magnifying-glass' },
     { id: 'sources-tab',  label: 'Fuentes',            icon: 'fa-folder-open' },
@@ -31,6 +32,7 @@ export default function Sidebar({ activeTab, setActiveTab, serverStatus, gpuName
     { id: 'youtube-tab',       label: 'YouTube',       icon: 'fa-brands fa-youtube', iconColor: '#ef4444' },
     { id: 'web-tab',           label: 'Páginas Web',   icon: 'fa-solid fa-globe', iconColor: '#38bdf8' },
     { id: 'summary-tab',       label: 'Resúmenes',     icon: 'fa-solid fa-file-invoice' },
+    { id: 'studio-tab',        label: 'Studio Hub',    icon: 'fa-solid fa-wand-magic-sparkles', iconColor: '#f59e0b' },
     { id: 'chat-tab',          label: 'Chat RAG',      icon: 'fa-solid fa-comments' },
     { id: 'search-tab',        label: 'Búsqueda',      icon: 'fa-solid fa-magnifying-glass' },
     { id: 'sources-tab',       label: 'Fuentes',       icon: 'fa-solid fa-folder-open' },

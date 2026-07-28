@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import Sidebar from './components/Sidebar';
 import TranscribeTab from './components/TranscribeTab';
 import SummaryTab from './components/SummaryTab';
+import StudioTab from './components/StudioTab';
 import ChatTab from './components/ChatTab';
 import SearchTab from './components/SearchTab';
 import SourcesTab from './components/SourcesTab';
@@ -203,6 +204,12 @@ export default function App() {
           activeId={activeTranscriptionId}
           setActiveId={setActiveTranscriptionId}
           active={activeTab === 'summary-tab'}
+        />
+
+        <StudioTab 
+          transcriptionList={transcriptionList}
+          activeId={activeTranscriptionId}
+          active={activeTab === 'studio-tab'}
         />
 
         <ChatTab 

@@ -75,6 +75,8 @@ export default function TranscribeTab({
   const [diarize, setDiarize] = useState<boolean>(true);
   const [hfToken, setHfToken] = useState<string>('');
   const [align, setAlign] = useState<boolean>(true);
+  const [minSpeakers, setMinSpeakers] = useState<string>('');
+  const [maxSpeakers, setMaxSpeakers] = useState<string>('');
 
   const handleBackendChange = (e: ChangeEvent<HTMLSelectElement>) => {
     const val = e.target.value;
@@ -186,10 +188,10 @@ export default function TranscribeTab({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Error al concatenar");
-      
-      setLocalPath(data.concat_path);
+      const targetPath = data.concat_path || data.filepath || '';
+      setLocalPath(targetPath);
       setInputMethod('path');
-      alert(`¡Audios concatenados con éxito! Ruta guardada:\n${data.concat_path}`);
+      alert(`¡Audios concatenados con éxito!\nRuta de archivo asignada para transcripción:\n${targetPath}`);
     } catch (err: any) {
       alert(`Error de concatenación: ${err.message}`);
     } finally {
@@ -218,28 +220,68 @@ export default function TranscribeTab({
 
     try {
       if (inputMethod === 'batch') {
-        const formData = new FormData();
-        batchQueue.forEach(item => formData.append('files', item.file));
-        formData.append('backend', backend);
-        formData.append('model', model);
-        if (language) formData.append('language', language);
-        formData.append('diarize', String(diarize));
-        if (hfToken) formData.append('hf_token', hfToken);
-        formData.append('align', String(align));
+        const pendingItems = batchQueue.filter(i => i.status === 'pending');
+        if (pendingItems.length === 0) {
+          alert("Todos los archivos en la cola ya han sido procesados.");
+          setIsProcessing(false);
+          stopPollingStatus();
+          return;
+        }
 
-        const response = await fetch('/api/transcribe/batch', {
-          method: 'POST',
-          body: formData,
-        });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.detail || 'Falló el inicio del lote');
+        let lastTranscriptionId: number | null = null;
 
-        alert(`Lote iniciado: ${data.total_queued} archivos en cola.`);
+        for (const item of pendingItems) {
+          setBatchQueue(prev => prev.map(i => i.id === item.id ? { ...i, status: 'processing' } : i));
+
+          try {
+            const formData = new FormData();
+            formData.append('file', item.file);
+            formData.append('backend', backend);
+            formData.append('model', model);
+            if (language) formData.append('language', language);
+            formData.append('diarize', String(diarize));
+            if (hfToken) formData.append('hf_token', hfToken);
+            if (diarize && minSpeakers) formData.append('min_speakers', minSpeakers);
+            if (diarize && maxSpeakers) formData.append('max_speakers', maxSpeakers);
+            formData.append('align', String(align));
+
+            const response = await fetch('/api/transcribe', {
+              method: 'POST',
+              body: formData,
+            });
+
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.detail || 'Falló la transcripción');
+
+            setBatchQueue(prev => prev.map(i => i.id === item.id ? {
+              ...i,
+              status: 'success',
+              transcriptionId: data.id
+            } : i));
+
+            if (data.id) {
+              lastTranscriptionId = data.id;
+            }
+          } catch (itemErr: any) {
+            setBatchQueue(prev => prev.map(i => i.id === item.id ? {
+              ...i,
+              status: 'error',
+              errorMsg: itemErr.message || 'Error en la transcripción'
+            } : i));
+          }
+        }
+
+        if (lastTranscriptionId) {
+          onTranscriptionSuccess(lastTranscriptionId);
+        }
+        setIsProcessing(false);
+        stopPollingStatus();
       } else {
         const formData = new FormData();
         if (inputMethod === 'upload' && file) {
           formData.append('file', file);
         } else if (inputMethod === 'path') {
+          formData.append('filePath', localPath);
           formData.append('file_path', localPath);
         }
         
@@ -248,6 +290,8 @@ export default function TranscribeTab({
         if (language) formData.append('language', language);
         formData.append('diarize', String(diarize));
         if (hfToken) formData.append('hf_token', hfToken);
+        if (diarize && minSpeakers) formData.append('min_speakers', minSpeakers);
+        if (diarize && maxSpeakers) formData.append('max_speakers', maxSpeakers);
         formData.append('align', String(align));
 
         const response = await fetch('/api/transcribe', {
@@ -593,23 +637,54 @@ export default function TranscribeTab({
 
               {/* HF Token Input for Diarization */}
               {diarize && (
-                <div className="p-3 rounded-lg bg-white/[0.03] border border-white/10 flex flex-col gap-1.5">
-                  <label htmlFor="hf-token-input" className="text-xs font-medium text-zinc-300 flex items-center gap-1.5">
-                    <i className="fa-solid fa-key text-amber-400"></i> Token de HuggingFace (PyAnnote):
-                  </label>
-                  <input
-                    type="password"
-                    id="hf-token-input"
-                    className="w-full bg-white/[0.04] border border-white/10 rounded-lg text-white px-3 py-1.5 text-xs focus:outline-none focus:border-amber-500"
-                    placeholder={hasHfToken ? "hf_... (Configurado en .env - Dejar vacío para usar default)" : "hf_... (Pega tu token hf_api_...)"}
-                    value={hfToken}
-                    onChange={(e) => setHfToken(e.target.value)}
-                  />
-                  {hasHfToken && !hfToken && (
-                    <span className="text-[11px] text-emerald-400 flex items-center gap-1">
-                      <i className="fa-solid fa-check-circle"></i> Token detectado en variables de entorno (.env)
-                    </span>
-                  )}
+                <div className="p-3 rounded-lg bg-white/[0.03] border border-white/10 flex flex-col gap-2.5">
+                  <div className="flex flex-col gap-1.5">
+                    <label htmlFor="hf-token-input" className="text-xs font-medium text-zinc-300 flex items-center gap-1.5">
+                      <i className="fa-solid fa-key text-amber-400"></i> Token de HuggingFace (PyAnnote):
+                    </label>
+                    <input
+                      type="password"
+                      id="hf-token-input"
+                      className="w-full bg-white/[0.04] border border-white/10 rounded-lg text-white px-3 py-1.5 text-xs focus:outline-none focus:border-amber-500"
+                      placeholder={hasHfToken ? "hf_... (Configurado en .env - Dejar vacío para usar default)" : "hf_... (Pega tu token hf_api_...)"}
+                      value={hfToken}
+                      onChange={(e) => setHfToken(e.target.value)}
+                    />
+                    {hasHfToken && !hfToken && (
+                      <span className="text-[11px] text-emerald-400 flex items-center gap-1">
+                        <i className="fa-solid fa-check-circle"></i> Token detectado en variables de entorno (.env)
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 pt-2 border-t border-white/10">
+                    <div className="flex flex-col gap-1">
+                      <label htmlFor="min-speakers-input" className="text-[11px] font-medium text-zinc-300">Mín. Locutores (opcional)</label>
+                      <input
+                        type="number"
+                        id="min-speakers-input"
+                        min="1"
+                        max="20"
+                        className="w-full bg-white/[0.04] border border-white/10 rounded-lg text-white px-2.5 py-1 text-xs focus:outline-none focus:border-amber-500"
+                        placeholder="Ej: 2"
+                        value={minSpeakers}
+                        onChange={(e) => setMinSpeakers(e.target.value)}
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label htmlFor="max-speakers-input" className="text-[11px] font-medium text-zinc-300">Máx. Locutores (opcional)</label>
+                      <input
+                        type="number"
+                        id="max-speakers-input"
+                        min="1"
+                        max="20"
+                        className="w-full bg-white/[0.04] border border-white/10 rounded-lg text-white px-2.5 py-1 text-xs focus:outline-none focus:border-amber-500"
+                        placeholder="Ej: 2"
+                        value={maxSpeakers}
+                        onChange={(e) => setMaxSpeakers(e.target.value)}
+                      />
+                    </div>
+                  </div>
                 </div>
               )}
 

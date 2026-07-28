@@ -87,8 +87,11 @@ class RAGService:
         # Unload model from VRAM immediately to free memory!
         self.unload_embedding_model()
 
-    def get_context(self, query: str, transcription_ids: Any, top_k: int = 6) -> str:
-        """Search for the most semantically similar chunks across one or multiple transcriptions/sources."""
+    def get_context_with_citations(self, query: str, transcription_ids: Any, top_k: int = 6) -> Dict[str, Any]:
+        """
+        Search for top_k semantically similar chunks and return structured context with citation IDs.
+        Returns dict with: 'context_text', 'citations' list.
+        """
         if isinstance(transcription_ids, (int, str)):
             try:
                 ids = [int(transcription_ids)]
@@ -100,7 +103,7 @@ class RAGService:
             ids = []
 
         if not ids:
-            return ""
+            return {"context_text": "", "citations": []}
 
         self._load_model()
         from gpu_lock import gpu_lock
@@ -110,7 +113,7 @@ class RAGService:
         
         placeholders = ",".join(["?"] * len(ids))
         sql = f"""
-            SELECT c.id, c.text, c.embedding, t.filename 
+            SELECT c.id, c.text, c.embedding, c.transcription_id, t.filename 
             FROM chunks c
             JOIN transcriptions t ON c.transcription_id = t.id
             WHERE c.transcription_id IN ({placeholders})
@@ -119,7 +122,7 @@ class RAGService:
             rows = conn.execute(sql, ids).fetchall()
             
         if not rows:
-            return ""
+            return {"context_text": "", "citations": []}
             
         similarities = []
         for row in rows:
@@ -128,13 +131,42 @@ class RAGService:
             norm_q = np.linalg.norm(query_vector)
             norm_emb = np.linalg.norm(emb)
             similarity = dot_product / (norm_q * norm_emb) if norm_q > 0 and norm_emb > 0 else 0.0
-            snippet = f"[Fuente: {row['filename']}]\n{row['text']}"
-            similarities.append((similarity, snippet))
+            similarities.append((
+                similarity,
+                row["id"],
+                row["transcription_id"],
+                row["filename"],
+                row["text"]
+            ))
             
         # Sort descending by similarity
         similarities.sort(key=lambda x: x[0], reverse=True)
-        top_chunks = [text for _, text in similarities[:top_k]]
-        return "\n\n---\n\n".join(top_chunks)
+        top_matches = similarities[:top_k]
+
+        citations = []
+        context_parts = []
+
+        for idx, item in enumerate(top_matches, start=1):
+            sim, chunk_id, source_id, filename, text = item
+            citations.append({
+                "num": idx,
+                "source_id": source_id,
+                "filename": filename,
+                "chunk_id": chunk_id,
+                "snippet": text[:350] + ("..." if len(text) > 350 else ""),
+                "full_text": text
+            })
+            context_parts.append(f"[Fuente Cita [{idx}] | Archivo: {filename}]\n{text}")
+
+        return {
+            "context_text": "\n\n---\n\n".join(context_parts),
+            "citations": citations
+        }
+
+    def get_context(self, query: str, transcription_ids: Any, top_k: int = 6) -> str:
+        """Search for the most semantically similar chunks across one or multiple transcriptions/sources."""
+        res = self.get_context_with_citations(query, transcription_ids, top_k=top_k)
+        return res["context_text"]
 
     def call_ollama_generate(self, prompt: str, temperature: float = 0.3) -> str:
         """Query Ollama generate API endpoint."""
@@ -580,9 +612,9 @@ Contenido Web:
         has_real_context = bool(context and context.strip() and "No hay contexto de documentos" not in context)
         
         if has_real_context:
-            system_prompt = f"""Eres un asistente experto de inteligencia artificial. [Fecha/Hora Sistema: {now_str}]
+            system_prompt = f"""Eres un asistente experto de inteligencia artificial RAG. [Fecha/Hora Sistema: {now_str}]
 Responde la pregunta del usuario utilizando la información provista en el 'Contexto' a continuación. 
-Si el contexto no tiene suficiente información para responder sobre el tema, indícalo amablemente, pero no inventes información.
+REGLA OBLIGATORIA DE CITAS: Cada vez que afirmes un hecho, dato, cifra o concepto obtenido del contexto, coloca la etiqueta de cita correspondiente al final de la frase entre corchetes, por ejemplo [1] o [2]. Utiliza únicamente los números de cita provistos en los encabezados del contexto [Fuente Cita [1]...].
 
 Contexto de la Información:
 {context}
