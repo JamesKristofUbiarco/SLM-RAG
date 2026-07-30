@@ -102,13 +102,27 @@ export interface CitationItem {
   full_text: string;
 }
 
+export type ChatSearchMode = 'local' | 'web' | 'hybrid';
+export type ChatSearchDepth = 'quick' | 'deep' | 'crawler';
+
+export interface ChatRequestOptions {
+  search_mode: ChatSearchMode;
+  search_depth: ChatSearchDepth;
+  time_filter: string | null;
+  domain_filter: string | null;
+  similarity_threshold: number;
+  source_ids: number[];
+}
+
 export interface Message {
+  id?: number;
   role: 'user' | 'assistant';
   content: string;
   sources?: SearchResult[] | null;
   web_sources?: WebSource[] | null;
   citations?: CitationItem[] | null;
   search_logs?: string[] | null;
+  request_options?: ChatRequestOptions;
 }
 
 export interface ChunkItem {

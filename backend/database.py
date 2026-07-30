@@ -3,7 +3,7 @@ import datetime
 from config import DB_FILE
 
 DB_PATH = DB_FILE
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def _backup_before_migration() -> None:
@@ -165,7 +165,8 @@ def init_db():
         for col in [
             "web_sources_json TEXT",
             "citations_json TEXT",
-            "search_logs_json TEXT"
+            "search_logs_json TEXT",
+            "request_options_json TEXT",
         ]:
             try:
                 conn.execute(f"ALTER TABLE chat_history ADD COLUMN {col}")

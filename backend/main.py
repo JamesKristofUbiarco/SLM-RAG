@@ -7,7 +7,7 @@ import time
 import datetime
 import uuid
 import json
-from typing import Optional, List, Dict, Any, Union
+from typing import Optional, List, Dict, Any, Union, Literal
 from pydantic import BaseModel
 from fastapi import FastAPI, UploadFile, File, Form, Query, HTTPException, BackgroundTasks, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
@@ -1793,7 +1793,7 @@ async def get_chat_session_details(session_id: str):
             raise HTTPException(status_code=404, detail="Sesión de chat no encontrada.")
 
         history_rows = conn.execute(
-            """SELECT role, text, web_sources_json, citations_json, search_logs_json
+            """SELECT id, role, text, web_sources_json, citations_json, search_logs_json, request_options_json
                FROM chat_history WHERE session_id = ? ORDER BY id ASC""",
             (session_id,)
         ).fetchall()
@@ -1808,7 +1808,7 @@ async def get_chat_session_details(session_id: str):
 
     messages = []
     for r in history_rows:
-        msg = {"role": r["role"], "content": r["text"]}
+        msg = {"id": r["id"], "role": r["role"], "content": r["text"]}
         ws = _parse_json_col(r["web_sources_json"])
         ct = _parse_json_col(r["citations_json"])
         sl = _parse_json_col(r["search_logs_json"])
@@ -1818,6 +1818,9 @@ async def get_chat_session_details(session_id: str):
             msg["citations"] = ct
         if sl is not None:
             msg["search_logs"] = sl
+        request_options = _parse_json_col(r["request_options_json"])
+        if request_options is not None and r["role"] == "user":
+            msg["request_options"] = request_options
         messages.append(msg)
 
     source_ids = []
@@ -1833,6 +1836,120 @@ async def get_chat_session_details(session_id: str):
         "created_at": session_row["created_at"],
         "messages": messages
     }
+
+
+class BranchChatSessionPayload(BaseModel):
+    edited_message: str
+
+
+def _turn_options_from_row(target_row, next_assistant_row) -> Dict[str, Any]:
+    """Restore saved turn settings, with a conservative inference for legacy messages."""
+    source_ids = [
+        int(value)
+        for value in (target_row["context_sources"] or "").split(",")
+        if value.strip().isdigit()
+    ]
+    defaults: Dict[str, Any] = {
+        "search_mode": "local",
+        "search_depth": "quick",
+        "time_filter": None,
+        "domain_filter": None,
+        "similarity_threshold": 0.50,
+        "source_ids": source_ids,
+    }
+    raw_options = target_row["request_options_json"]
+    if raw_options:
+        try:
+            parsed = json.loads(raw_options)
+            if isinstance(parsed, dict):
+                defaults.update({key: parsed[key] for key in defaults if key in parsed})
+                return defaults
+        except (TypeError, json.JSONDecodeError):
+            pass
+
+    if next_assistant_row:
+        has_web = bool(next_assistant_row["web_sources_json"])
+        has_local = bool(next_assistant_row["citations_json"]) or bool(source_ids)
+        if has_web and has_local:
+            defaults["search_mode"] = "hybrid"
+        elif has_web:
+            defaults["search_mode"] = "web"
+    return defaults
+
+
+@app.post("/api/chat/sessions/{session_id}/branch/{message_id}")
+async def branch_chat_session(session_id: str, message_id: int, payload: BranchChatSessionPayload):
+    """Create a new conversation containing only the history before an edited user message."""
+    edited_message = payload.edited_message.strip()
+    if not edited_message:
+        raise HTTPException(status_code=400, detail="El mensaje editado no puede estar vacío.")
+
+    with get_db() as conn:
+        session_row = conn.execute(
+            "SELECT id, title, context_sources FROM chat_sessions WHERE id = ?",
+            (session_id,),
+        ).fetchone()
+        if not session_row:
+            raise HTTPException(status_code=404, detail="Sesión de chat no encontrada.")
+
+        target_row = conn.execute(
+            """SELECT id, role, context_sources, request_options_json
+               FROM chat_history WHERE id = ? AND session_id = ?""",
+            (message_id, session_id),
+        ).fetchone()
+        if not target_row:
+            raise HTTPException(status_code=404, detail="Mensaje no encontrado en esta conversación.")
+        if target_row["role"] != "user":
+            raise HTTPException(status_code=400, detail="Solo se pueden editar mensajes del usuario.")
+
+        next_assistant_row = conn.execute(
+            """SELECT web_sources_json, citations_json FROM chat_history
+               WHERE session_id = ? AND id > ? AND role = 'assistant' ORDER BY id ASC LIMIT 1""",
+            (session_id, message_id),
+        ).fetchone()
+        request_options = _turn_options_from_row(target_row, next_assistant_row)
+        source_ids = [int(value) for value in request_options.get("source_ids", []) if str(value).isdigit()]
+        valid_source_ids = []
+        if source_ids:
+            placeholders = ",".join("?" for _ in source_ids)
+            valid_rows = conn.execute(
+                f"SELECT id FROM transcriptions WHERE id IN ({placeholders})",
+                source_ids,
+            ).fetchall()
+            valid_ids = {row["id"] for row in valid_rows}
+            valid_source_ids = [source_id for source_id in source_ids if source_id in valid_ids]
+        request_options["source_ids"] = valid_source_ids
+
+        new_session_id = f"session_{uuid.uuid4().hex[:12]}"
+        new_title = f"{edited_message[:35]}..." if len(edited_message) > 35 else edited_message
+        branch_sources = ",".join(map(str, valid_source_ids)) if valid_source_ids else "no_sources"
+        conn.execute(
+            "INSERT INTO chat_sessions (id, title, context_sources) VALUES (?, ?, ?)",
+            (new_session_id, new_title, branch_sources),
+        )
+
+        prefix_rows = conn.execute(
+            """SELECT transcription_id, role, text, context_sources, web_sources_json,
+                      citations_json, search_logs_json, request_options_json, created_at
+               FROM chat_history WHERE session_id = ? AND id < ? ORDER BY id ASC""",
+            (session_id, message_id),
+        ).fetchall()
+        for row in prefix_rows:
+            conn.execute(
+                """INSERT INTO chat_history
+                   (transcription_id, role, text, context_sources, web_sources_json,
+                    citations_json, search_logs_json, request_options_json, created_at, session_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    row["transcription_id"], row["role"], row["text"], row["context_sources"],
+                    row["web_sources_json"], row["citations_json"], row["search_logs_json"],
+                    row["request_options_json"], row["created_at"], new_session_id,
+                ),
+            )
+        conn.commit()
+
+    details = await get_chat_session_details(new_session_id)
+    return {**details, "request_options": request_options, "branched_from": session_id}
 
 @app.delete("/api/chat/sessions/{session_id}")
 async def delete_chat_session(session_id: str):
@@ -1999,8 +2116,8 @@ class ChatPayload(BaseModel):
     source_ids: Optional[List[int]] = None
     message: Optional[str] = None
     query: Optional[str] = None
-    search_mode: Optional[str] = "local"
-    search_depth: Optional[str] = "quick"
+    search_mode: Literal["local", "web", "hybrid"] = "local"
+    search_depth: Literal["quick", "deep", "crawler"] = "quick"
     time_filter: Optional[str] = None
     domain_filter: Optional[str] = None
     similarity_threshold: Optional[float] = 0.50
@@ -2091,7 +2208,8 @@ async def chat_interaction(payload: ChatPayload):
             time_filter=payload.time_filter,
             domain_filter=payload.domain_filter,
             similarity_threshold=payload.similarity_threshold or 0.50,
-            history=history
+            history=history,
+            supplemental_context=local_context,
         )
         web_context = web_res.get("context_text", "")
         web_sources = web_res.get("web_sources", [])
@@ -2119,12 +2237,25 @@ async def chat_interaction(payload: ChatPayload):
 
     # Save message pair to history SQLite table
     first_target_id = target_ids[0] if target_ids else None
+    request_options = {
+        "search_mode": mode,
+        "search_depth": payload.search_depth,
+        "time_filter": payload.time_filter,
+        "domain_filter": payload.domain_filter,
+        "similarity_threshold": payload.similarity_threshold or 0.50,
+        "source_ids": target_ids,
+    }
     with get_db() as conn:
-        conn.execute(
-            "INSERT INTO chat_history (transcription_id, role, text, context_sources, session_id) VALUES (?, ?, ?, ?, ?)",
-            (first_target_id, "user", message_str, sources_key, active_session_id)
+        user_cursor = conn.execute(
+            """INSERT INTO chat_history
+               (transcription_id, role, text, context_sources, request_options_json, session_id)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                first_target_id, "user", message_str, sources_key,
+                json.dumps(request_options, ensure_ascii=False), active_session_id,
+            ),
         )
-        conn.execute(
+        assistant_cursor = conn.execute(
             """INSERT INTO chat_history
                (transcription_id, role, text, context_sources, session_id,
                 web_sources_json, citations_json, search_logs_json)
@@ -2140,6 +2271,8 @@ async def chat_interaction(payload: ChatPayload):
 
     return {
         "session_id": active_session_id,
+        "user_message_id": user_cursor.lastrowid,
+        "assistant_message_id": assistant_cursor.lastrowid,
         "response": llm_response,
         "answer": llm_response,
         "citations": citations,

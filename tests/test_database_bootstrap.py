@@ -25,6 +25,7 @@ class DatabaseBootstrapTests(unittest.TestCase):
                 chat_columns = {row['name'] for row in connection.execute('PRAGMA table_info(chat_history)')}
                 chunk_columns = {row['name'] for row in connection.execute('PRAGMA table_info(chunks)')}
                 assert 'context_sources' in chat_columns
+                assert 'request_options_json' in chat_columns
                 assert {'embedding_model', 'embedding_dimension', 'index_version'} <= chunk_columns
                 assert connection.execute('PRAGMA foreign_keys').fetchone()[0] == 1
 

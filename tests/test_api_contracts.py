@@ -22,12 +22,14 @@ class ApiContractTests(unittest.TestCase):
             paths = {route.path for route in main.app.routes}
             required = {
                 '/api/status', '/api/transcribe', '/api/chat', '/api/projects',
-                '/api/studio/generate', '/api/jobs/{job_id}'
+                '/api/studio/generate', '/api/jobs/{job_id}',
+                '/api/chat/sessions/{session_id}/branch/{message_id}'
             }
             assert required <= paths
             transcribe_parameters = inspect.signature(main.transcribe).parameters
             assert 'model_name' in transcribe_parameters
             assert 'model' in transcribe_parameters
+            assert main.ChatPayload(search_depth='crawler').search_depth == 'crawler'
 
             service = main.whisper_service
             original_loader = whisper_module.whisperx.load_model
@@ -80,6 +82,66 @@ class ApiContractTests(unittest.TestCase):
             ))
             stale_session = asyncio.run(main.get_chat_session_details(stale_import['session_id']))
             assert stale_session['messages'][0]['content'] == 'contenido conservado'
+
+            linear_import = asyncio.run(main.import_chat_session(
+                main.ImportChatSessionPayload(
+                    title='Conversación lineal',
+                    context_sources='no_sources',
+                    messages=[
+                        {'role': 'user', 'content': 'pregunta inicial'},
+                        {'role': 'assistant', 'content': 'respuesta inicial'},
+                        {'role': 'user', 'content': 'pregunta a editar'},
+                        {'role': 'assistant', 'content': 'respuesta que quedará en la original'},
+                    ],
+                )
+            ))
+            original_before = asyncio.run(main.get_chat_session_details(linear_import['session_id']))
+            target_message_id = original_before['messages'][2]['id']
+            branch = asyncio.run(main.branch_chat_session(
+                linear_import['session_id'],
+                target_message_id,
+                main.BranchChatSessionPayload(edited_message='pregunta corregida'),
+            ))
+            assert [message['content'] for message in branch['messages']] == [
+                'pregunta inicial', 'respuesta inicial'
+            ]
+            assert branch['branched_from'] == linear_import['session_id']
+
+            captured_history = []
+            original_query_llm = main.rag_service.query_llm
+            original_run_in_threadpool = main.run_in_threadpool
+            try:
+                def fake_query_llm(query, context, history):
+                    captured_history.extend(history)
+                    return 'respuesta de la rama'
+                async def immediate_run(function, **kwargs):
+                    return function(**kwargs)
+                main.rag_service.query_llm = fake_query_llm
+                main.run_in_threadpool = immediate_run
+                branch_response = asyncio.run(main.chat_interaction(main.ChatPayload(
+                    session_id=branch['id'],
+                    query='pregunta corregida',
+                    search_mode='local',
+                )))
+            finally:
+                main.rag_service.query_llm = original_query_llm
+                main.run_in_threadpool = original_run_in_threadpool
+
+            assert [message['content'] for message in captured_history] == [
+                'pregunta inicial', 'respuesta inicial'
+            ]
+            assert branch_response['user_message_id']
+            assert branch_response['assistant_message_id']
+            branch_after = asyncio.run(main.get_chat_session_details(branch['id']))
+            assert [message['content'] for message in branch_after['messages']] == [
+                'pregunta inicial', 'respuesta inicial', 'pregunta corregida', 'respuesta de la rama'
+            ]
+            assert branch_after['messages'][2]['request_options']['search_mode'] == 'local'
+            original_after = asyncio.run(main.get_chat_session_details(linear_import['session_id']))
+            assert [message['content'] for message in original_after['messages']] == [
+                'pregunta inicial', 'respuesta inicial',
+                'pregunta a editar', 'respuesta que quedará en la original'
+            ]
 
             with main.get_db() as connection:
                 cursor = connection.execute(

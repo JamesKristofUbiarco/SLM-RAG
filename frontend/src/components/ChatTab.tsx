@@ -1,15 +1,51 @@
 import React, { useState, useEffect, useRef, FormEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Transcription, Message, Project, Folder, ChatSession, CitationItem } from '../types';
+import {
+  Transcription, Message, Project, Folder, ChatSession, CitationItem,
+  ChatRequestOptions, ChatSearchDepth, ChatSearchMode,
+} from '../types';
 import FolderTree from './FolderTree';
 import { markdownToSafeHtml } from '../utils/markdown';
 import { renderCitationBadgesInHtml } from '../utils/citations';
+import { isDisclosureInitiallyOpen, researchLogsText, sourcesText } from '../utils/disclosures';
 
 interface ChatTabProps {
   transcriptionList: Transcription[];
   activeId: number | null;
   setActiveId?: (id: number) => void;
   active: boolean;
+}
+
+interface DisclosureSectionProps {
+  title: React.ReactNode;
+  defaultOpen: boolean;
+  accentClass: string;
+  containerClass: string;
+  children: React.ReactNode;
+}
+
+function DisclosureSection({
+  title,
+  defaultOpen,
+  accentClass,
+  containerClass,
+  children,
+}: DisclosureSectionProps) {
+  const [isOpen, setIsOpen] = useState(defaultOpen);
+
+  return (
+    <details
+      open={isOpen}
+      onToggle={(event) => setIsOpen(event.currentTarget.open)}
+      className={containerClass}
+    >
+      <summary className={`list-none cursor-pointer select-none font-semibold flex items-center gap-1.5 ${accentClass}`}>
+        <i className={`fa-solid fa-chevron-right text-[10px] transition-transform ${isOpen ? 'rotate-90' : ''}`}></i>
+        {title}
+      </summary>
+      {isOpen && <div className="mt-2">{children}</div>}
+    </details>
+  );
 }
 
 export default function ChatTab({ transcriptionList, activeId, setActiveId, active }: ChatTabProps) {
@@ -25,8 +61,8 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
   const [showSessionsPanel, setShowSessionsPanel] = useState<boolean>(false);
 
   // Search Mode & Parameters State
-  const [searchMode, setSearchMode] = useState<'local' | 'web' | 'hybrid'>('local');
-  const [searchDepth, setSearchDepth] = useState<'quick' | 'deep'>('quick');
+  const [searchMode, setSearchMode] = useState<ChatSearchMode>('local');
+  const [searchDepth, setSearchDepth] = useState<ChatSearchDepth>('quick');
   const [timeFilter, setTimeFilter] = useState<string>('');
   const [domainFilter, setDomainFilter] = useState<string>('');
   const [similarityThreshold, setSimilarityThreshold] = useState<number>(0.50);
@@ -55,8 +91,37 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
   const [isTyping, setIsTyping] = useState<boolean>(false);
   const [openedSourcesIdx, setOpenedSourcesIdx] = useState<Record<number, boolean>>({});
   const [selectedCitation, setSelectedCitation] = useState<CitationItem | null>(null);
+  const [editingMessage, setEditingMessage] = useState<Message | null>(null);
+  const [editedMessageText, setEditedMessageText] = useState<string>('');
+  const [isCreatingBranch, setIsCreatingBranch] = useState<boolean>(false);
 
   const chatBubblesEndRef = useRef<HTMLDivElement>(null);
+  const chatInputRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    const input = chatInputRef.current;
+    if (!input) return;
+
+    const styles = window.getComputedStyle(input);
+    const lineHeight = Number.parseFloat(styles.lineHeight) || 20;
+    const verticalPadding = Number.parseFloat(styles.paddingTop) + Number.parseFloat(styles.paddingBottom);
+    const verticalBorder = Number.parseFloat(styles.borderTopWidth) + Number.parseFloat(styles.borderBottomWidth);
+    const minimumHeight = lineHeight + verticalPadding + verticalBorder;
+    const maximumScrollHeight = (lineHeight * 8) + verticalPadding;
+    const maximumHeight = maximumScrollHeight + verticalBorder;
+
+    input.style.boxSizing = 'border-box';
+    input.style.minHeight = `${minimumHeight}px`;
+    input.style.maxHeight = `${maximumHeight}px`;
+    input.style.height = `${minimumHeight}px`;
+
+    const desiredHeight = Math.max(
+      minimumHeight,
+      Math.min(input.scrollHeight + verticalBorder, maximumHeight),
+    );
+    input.style.height = `${desiredHeight}px`;
+    input.style.overflowY = input.scrollHeight > maximumScrollHeight ? 'auto' : 'hidden';
+  }, [inputVal, active]);
 
   // Fetch Projects & Folders
   const fetchProjectsAndFolders = async () => {
@@ -171,9 +236,7 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
       if (res.ok) {
         const data = await res.json();
         setMessages(data.messages || []);
-        if (data.source_ids && data.source_ids.length > 0) {
-          setSelectedSourceIds(new Set(data.source_ids));
-        }
+        setSelectedSourceIds(new Set(data.source_ids || []));
       }
     } catch (e) {
       console.error('Error loading chat session payload:', e);
@@ -335,23 +398,27 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
     setShowSelectorCard(true);
   };
 
-  const dispatchQuery = async (queryText: string) => {
+  const dispatchQuery = async (
+    queryText: string,
+    overrides?: { sessionId: string; requestOptions: ChatRequestOptions },
+  ) => {
     const userMsg: Message = { role: 'user', content: queryText };
     setMessages(prev => [...prev, userMsg]);
     setInputVal('');
     setIsTyping(true);
 
     try {
+      const requestOptions = overrides?.requestOptions;
+      const requestSessionId = overrides?.sessionId ?? activeSessionId;
       const payload = {
-        session_id: activeSessionId,
+        session_id: requestSessionId,
         query: queryText,
-        source_ids: Array.from(selectedSourceIds),
-        search_mode: searchMode,
-        search_depth: searchDepth,
-        time_filter: timeFilter || null,
-        domain_filter: domainFilter || null,
-        similarity_threshold: similarityThreshold,
-        history: messages.slice(-10).map(m => ({ role: m.role, content: m.content }))
+        source_ids: requestOptions?.source_ids ?? Array.from(selectedSourceIds),
+        search_mode: requestOptions?.search_mode ?? searchMode,
+        search_depth: requestOptions?.search_depth ?? searchDepth,
+        time_filter: requestOptions?.time_filter ?? (timeFilter || null),
+        domain_filter: requestOptions?.domain_filter ?? (domainFilter || null),
+        similarity_threshold: requestOptions?.similarity_threshold ?? similarityThreshold,
       };
 
       const response = await fetch('/api/chat', {
@@ -373,12 +440,13 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
         throw new Error(errStr);
       }
 
-      if (data.session_id && !activeSessionId) {
+      if (data.session_id && !requestSessionId) {
         setActiveSessionId(data.session_id);
         fetchChatSessions();
       }
 
       const assistantMsg: Message = {
+        id: data.assistant_message_id,
         role: 'assistant',
         content: data.response || data.answer || 'Sin respuesta generada.',
         sources: data.sources || [],
@@ -387,7 +455,17 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
         search_logs: data.search_logs || []
       };
 
-      setMessages(prev => [...prev, assistantMsg]);
+      setMessages(prev => {
+        const updated = [...prev];
+        for (let index = updated.length - 1; index >= 0; index -= 1) {
+          if (updated[index].role === 'user' && updated[index].id === undefined) {
+            updated[index] = { ...updated[index], id: data.user_message_id };
+            break;
+          }
+        }
+        return [...updated, assistantMsg];
+      });
+      fetchChatSessions();
     } catch (err: any) {
       const errMsg = typeof err === 'string' ? err : (err.message || 'Error desconocido');
       setMessages(prev => [
@@ -396,6 +474,40 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
       ]);
     } finally {
       setIsTyping(false);
+    }
+  };
+
+  const handleConfirmMessageEdit = async () => {
+    const editedText = editedMessageText.trim();
+    if (!editingMessage?.id || !activeSessionId || !editedText || isCreatingBranch || isTyping) return;
+
+    setIsCreatingBranch(true);
+    try {
+      const response = await fetch(`/api/chat/sessions/${activeSessionId}/branch/${editingMessage.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ edited_message: editedText }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'No se pudo crear la nueva rama de conversación.');
+
+      const requestOptions = data.request_options as ChatRequestOptions;
+      setActiveSessionId(data.id);
+      setMessages(data.messages || []);
+      setSelectedSourceIds(new Set(requestOptions.source_ids || []));
+      setSearchMode(requestOptions.search_mode);
+      setSearchDepth(requestOptions.search_depth);
+      setTimeFilter(requestOptions.time_filter || '');
+      setDomainFilter(requestOptions.domain_filter || '');
+      setSimilarityThreshold(requestOptions.similarity_threshold ?? 0.50);
+      setEditingMessage(null);
+      setEditedMessageText('');
+      await fetchChatSessions();
+      await dispatchQuery(editedText, { sessionId: data.id, requestOptions });
+    } catch (error: any) {
+      alert(`Error al editar el mensaje: ${error.message || 'Error desconocido'}`);
+    } finally {
+      setIsCreatingBranch(false);
     }
   };
 
@@ -587,10 +699,11 @@ const MemoizedMarkdownText = React.memo(function MemoizedMarkdownText({ content 
               <select
                 className="bg-[#1e293b] border border-white/10 rounded-lg text-white p-2 focus:outline-none focus:border-amber-500"
                 value={searchDepth}
-                onChange={e => setSearchDepth(e.target.value as 'quick' | 'deep')}
+                onChange={e => setSearchDepth(e.target.value as 'quick' | 'deep' | 'crawler')}
               >
-                <option value="quick">⚡ Rápida (3 URLs / Top 4 chunks)</option>
-                <option value="deep">🔬 Profunda (6 URLs / Top 10 chunks)</option>
+                <option value="quick">⚡ Rápida (3 consultas / hasta 9 URLs)</option>
+                <option value="deep">🔬 Profunda (4 consultas / hasta 24 URLs)</option>
+                <option value="crawler">🕷️ Crawler iterativo (hasta 4 ciclos)</option>
               </select>
             </div>
 
@@ -734,7 +847,7 @@ const MemoizedMarkdownText = React.memo(function MemoizedMarkdownText({ content 
               )}
 
               {messages.map((msg, index) => (
-                <div key={index} className={`flex gap-3 max-w-[90%] sm:max-w-[85%] ${msg.role === 'user' ? 'self-end flex-row-reverse' : 'self-start'}`}>
+                <div key={msg.id ?? `pending-${index}`} className={`flex gap-3 max-w-[90%] sm:max-w-[85%] ${msg.role === 'user' ? 'self-end flex-row-reverse' : 'self-start'}`}>
                   {msg.role === 'assistant' && (
                     <div className="w-8 h-8 rounded-full bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0 text-xs">
                       <i className="fa-solid fa-brain"></i>
@@ -751,26 +864,61 @@ const MemoizedMarkdownText = React.memo(function MemoizedMarkdownText({ content 
                   >
                     {/* Glassbox Live Research Stream Card */}
                     {msg.role === 'assistant' && msg.search_logs && msg.search_logs.length > 0 && (
-                      <div className="mb-3 p-3 rounded-lg bg-slate-950/80 border border-sky-500/30 text-xs">
-                        <div className="font-semibold text-sky-400 mb-1 flex items-center gap-1.5">
-                          <i className="fa-solid fa-terminal"></i> Rastreabilidad de Investigación Web en Vivo (Glassbox)
-                        </div>
+                      <DisclosureSection
+                        defaultOpen={isDisclosureInitiallyOpen(researchLogsText(msg.search_logs))}
+                        accentClass="text-sky-400"
+                        containerClass="mb-3 p-3 rounded-lg bg-slate-950/80 border border-sky-500/30 text-xs"
+                        title="Rastreabilidad de Investigación Web"
+                      >
                         <div className="font-mono text-zinc-300 space-y-0.5 leading-relaxed">
                           {msg.search_logs.map((log, lIdx) => (
                             <div key={lIdx}>{log}</div>
                           ))}
                         </div>
-                      </div>
+                      </DisclosureSection>
                     )}
 
                     <MemoizedMarkdownText content={msg.content} />
-                    
+
+                    {msg.role === 'user' && msg.id && activeSessionId && (
+                      <div className="mt-2 pt-1 flex justify-end">
+                        <button
+                          type="button"
+                          disabled={isTyping || isCreatingBranch}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setEditingMessage(msg);
+                            setEditedMessageText(msg.content);
+                          }}
+                          className="px-2 py-1 rounded-md text-[11px] text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
+                          title="Editar este mensaje y continuar en una nueva rama"
+                        >
+                          <i className="fa-solid fa-pen"></i> Editar y continuar
+                        </button>
+                      </div>
+                    )}
+
+                    {msg.role === 'assistant' && (
+                      (msg.web_sources && msg.web_sources.length > 0)
+                      || (msg.citations && msg.citations.length > 0)
+                    ) && (
+                      <DisclosureSection
+                        defaultOpen={isDisclosureInitiallyOpen(sourcesText(msg.web_sources, msg.citations))}
+                        accentClass="text-sky-400"
+                        containerClass="mt-3 pt-2 border-t border-white/10 text-xs"
+                        title={
+                          <>
+                            <i className="fa-solid fa-folder-tree"></i>
+                            Fuentes ({(msg.web_sources?.length ?? 0) + (msg.citations?.length ?? 0)})
+                          </>
+                        }
+                      >
                     {/* Real Web Source Badges */}
                     {msg.role === 'assistant' && msg.web_sources && msg.web_sources.length > 0 && (() => {
                       const relevant = msg.web_sources.filter(s => s.relevant !== false);
                       const notRelevant = msg.web_sources.filter(s => s.relevant === false);
                       return (
-                        <div className="mt-3 pt-2 border-t border-white/10 flex flex-col gap-1.5">
+                        <div className="flex flex-col gap-1.5">
                           <span className="text-xs font-semibold text-sky-400 flex items-center gap-1">
                             <i className="fa-solid fa-globe"></i> Fuentes Web ({msg.web_sources.length}):
                           </span>
@@ -858,7 +1006,7 @@ const MemoizedMarkdownText = React.memo(function MemoizedMarkdownText({ content 
 
                     {/* Clickable Citation Badges */}
                     {msg.role === 'assistant' && msg.citations && msg.citations.length > 0 && (
-                      <div className="mt-3 pt-2.5 border-t border-white/10 flex flex-col gap-2">
+                      <div className={`${msg.web_sources && msg.web_sources.length > 0 ? 'mt-3 pt-2.5 border-t border-white/10' : ''} flex flex-col gap-2`}>
                         <span className="text-xs font-semibold text-amber-400 flex items-center gap-1.5">
                           <i className="fa-solid fa-quote-left"></i> Fragmentos de Fuentes Locales ({msg.citations.length}):
                         </span>
@@ -876,6 +1024,8 @@ const MemoizedMarkdownText = React.memo(function MemoizedMarkdownText({ content 
                           ))}
                         </div>
                       </div>
+                    )}
+                      </DisclosureSection>
                     )}
 
                     {/* Save Fragment to Notebook Button */}
@@ -950,17 +1100,25 @@ const MemoizedMarkdownText = React.memo(function MemoizedMarkdownText({ content 
             </div>
 
             {/* Form input */}
-            <form id="chat-form" className="flex items-center gap-2 border-t border-white/10 p-3 bg-black/30" onSubmit={handleSendMessage}>
-              <input
-                type="text"
+            <form id="chat-form" className="flex items-end gap-2 border-t border-white/10 p-3 bg-black/30" onSubmit={handleSendMessage}>
+              <textarea
+                ref={chatInputRef}
                 id="chat-message-input"
                 placeholder={searchMode === 'web' ? 'Escribe tu consulta para investigar en la web en tiempo real...' : 'Escribe tu consulta sobre las fuentes seleccionadas...'}
                 required
                 autoComplete="off"
+                rows={1}
+                wrap="soft"
                 value={inputVal}
                 onChange={(e) => setInputVal(e.target.value)}
-                className="flex-1 bg-white/[0.03] border border-white/10 rounded-lg text-white px-3.5 py-2.5 text-sm focus:outline-none focus:border-amber-500 transition-colors"
-              />
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                    e.preventDefault();
+                    e.currentTarget.form?.requestSubmit();
+                  }
+                }}
+                className="flex-1 min-w-0 resize-none overflow-x-hidden bg-white/[0.03] border border-white/10 rounded-lg text-white px-3.5 py-2.5 text-sm leading-5 focus:outline-none focus:border-amber-500 transition-colors"
+              ></textarea>
               <button type="submit" className="px-4 py-2.5 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold rounded-lg flex items-center justify-center transition-colors cursor-pointer" id="send-chat-btn">
                 <i className="fa-solid fa-paper-plane"></i>
               </button>
@@ -968,6 +1126,68 @@ const MemoizedMarkdownText = React.memo(function MemoizedMarkdownText({ content 
           </div>
         </div>
       </div>
+
+      {/* Modal: Edit a historical user message into a safe conversation branch */}
+      {editingMessage && createPortal(
+        <div
+          className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => !isCreatingBranch && setEditingMessage(null)}
+        >
+          <div
+            className="p-6 rounded-2xl bg-[#17171c] border border-amber-500/40 shadow-2xl max-w-2xl w-full flex flex-col gap-4"
+            onClick={event => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-base font-semibold text-white flex items-center gap-2">
+                <i className="fa-solid fa-code-branch text-amber-400"></i> Editar y continuar desde aquí
+              </h3>
+              <button
+                type="button"
+                disabled={isCreatingBranch}
+                className="text-zinc-400 hover:text-white cursor-pointer disabled:opacity-40"
+                onClick={() => setEditingMessage(null)}
+              >
+                <i className="fa-solid fa-xmark"></i>
+              </button>
+            </div>
+
+            <p className="text-xs text-zinc-300 leading-relaxed">
+              Se creará una nueva conversación usando únicamente los mensajes anteriores a este punto. La conversación original permanecerá intacta en el historial.
+            </p>
+
+            <textarea
+              value={editedMessageText}
+              onChange={event => setEditedMessageText(event.target.value)}
+              rows={6}
+              disabled={isCreatingBranch}
+              className="w-full resize-y min-h-32 max-h-80 rounded-xl bg-black/40 border border-white/10 p-3 text-sm text-white leading-relaxed focus:outline-none focus:border-amber-500 disabled:opacity-60"
+              autoFocus
+            ></textarea>
+
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                disabled={isCreatingBranch}
+                className="px-3.5 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-white text-xs font-medium cursor-pointer disabled:opacity-40"
+                onClick={() => setEditingMessage(null)}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isCreatingBranch || !editedMessageText.trim()}
+                className="px-3.5 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 text-xs font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+                onClick={handleConfirmMessageEdit}
+              >
+                {isCreatingBranch
+                  ? <><i className="fa-solid fa-spinner fa-spin"></i> Creando rama...</>
+                  : <><i className="fa-solid fa-code-branch"></i> Crear rama y responder</>}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
 
       {/* Modal: Confirm Chat Without Sources */}
       {showNoSourcesModal && createPortal(

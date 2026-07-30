@@ -1,4 +1,4 @@
-import { Transcription } from '../types';
+import type { Folder, Transcription } from '../types';
 
 const AUDIO_VIDEO_EXTENSIONS = [
   '.mp3', '.mp4', '.wav', '.m4a', '.mkv', '.avi', '.mov', '.flac', '.ogg', '.webm', '.wma', '.aac', '.m4v',
@@ -20,4 +20,19 @@ export function isAudioVideoTranscription(item: Transcription): boolean {
   }
   const firstSegment = item.segments?.[0];
   return Boolean(firstSegment && (firstSegment.start > 0 || firstSegment.end > 0));
+}
+
+export function getDescendantFolderIds(folders: Folder[], rootFolderId: number): Set<number> {
+  const descendantIds = new Set<number>([rootFolderId]);
+  let foundDescendant = true;
+  while (foundDescendant) {
+    foundDescendant = false;
+    for (const folder of folders) {
+      if (folder.parent_id && descendantIds.has(folder.parent_id) && !descendantIds.has(folder.id)) {
+        descendantIds.add(folder.id);
+        foundDescendant = true;
+      }
+    }
+  }
+  return descendantIds;
 }

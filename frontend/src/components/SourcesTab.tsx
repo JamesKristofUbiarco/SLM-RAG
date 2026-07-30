@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Transcription, ChunkItem, Project, Folder, NoteItem, StudioResumePayload } from '../types';
 import FolderTree from './FolderTree';
 import { normalizeStudioArtifact, recoverFlashcards } from '../utils/studioArtifacts';
+import { getDescendantFolderIds } from '../utils/source';
 
 interface SourcesTabProps {
   transcriptionList: Transcription[];
@@ -10,6 +11,17 @@ interface SourcesTabProps {
   onResumeInStudio?: (payload: StudioResumePayload) => void;
   active: boolean;
 }
+
+type DeleteStructureTarget = {
+  type: 'folder' | 'project';
+  id: number;
+};
+
+type DeleteConfirmTarget = {
+  ids: number[];
+  label: string;
+  structure?: DeleteStructureTarget;
+};
 
 const SourcesTab = React.memo(function SourcesTab({ transcriptionList, onRefresh, onResumeInStudio, active }: SourcesTabProps) {
   const onRefreshRef = useRef(onRefresh);
@@ -53,7 +65,7 @@ const SourcesTab = React.memo(function SourcesTab({ transcriptionList, onRefresh
   const [isLoadingDetails, setIsLoadingDetails] = useState<boolean>(false);
 
   // Delete confirmation modal states
-  const [deleteConfirmTarget, setDeleteConfirmTarget] = useState<{ ids: number[]; label: string } | null>(null);
+  const [deleteConfirmTarget, setDeleteConfirmTarget] = useState<DeleteConfirmTarget | null>(null);
 
   const fetchNotes = async () => {
     try {
@@ -335,10 +347,16 @@ const SourcesTab = React.memo(function SourcesTab({ transcriptionList, onRefresh
   };
 
   const handleDeleteFolder = (folderId: number, folderName: string) => {
-    const folderSources = transcriptionList.filter(s => s.folder_id === folderId);
+    const descendantFolderIds = getDescendantFolderIds(folders, folderId);
+    const folderSources = transcriptionList.filter(source => (
+      source.folder_id !== null
+      && source.folder_id !== undefined
+      && descendantFolderIds.has(source.folder_id)
+    ));
     setDeleteConfirmTarget({
       ids: folderSources.map(s => s.id),
-      label: `carpeta "${folderName}" y sus ${folderSources.length} fuentes`
+      label: `carpeta "${folderName}" y sus ${folderSources.length} fuentes`,
+      structure: { type: 'folder', id: folderId },
     });
   };
 
@@ -346,32 +364,44 @@ const SourcesTab = React.memo(function SourcesTab({ transcriptionList, onRefresh
     const projectSources = transcriptionList.filter(s => s.project_id === projectId);
     setDeleteConfirmTarget({
       ids: projectSources.map(s => s.id),
-      label: `proyecto "${projectName}" y sus ${projectSources.length} fuentes`
+      label: `proyecto "${projectName}" y sus ${projectSources.length} fuentes`,
+      structure: { type: 'project', id: projectId },
     });
   };
 
   const executeConfirmDelete = async () => {
-    if (!deleteConfirmTarget || deleteConfirmTarget.ids.length === 0) return;
+    if (!deleteConfirmTarget) return;
     setIsDeleting(true);
 
     try {
-      const res = await fetch('/api/transcriptions/delete-batch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids: deleteConfirmTarget.ids })
-      });
-
-      if (res.ok) {
-        setSelectedIds(new Set());
-        setDeleteConfirmTarget(null);
-        if (onRefresh) await onRefresh();
-        await fetchProjectsAndFolders();
-      } else {
-        alert('Fallo al eliminar los elementos seleccionados.');
+      if (deleteConfirmTarget.ids.length > 0) {
+        const sourcesResponse = await fetch('/api/transcriptions/delete-batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: deleteConfirmTarget.ids })
+        });
+        if (!sourcesResponse.ok) {
+          throw new Error('No se pudieron eliminar las fuentes contenidas.');
+        }
       }
+
+      if (deleteConfirmTarget.structure) {
+        const { type, id } = deleteConfirmTarget.structure;
+        const structureResponse = await fetch(`/api/${type === 'folder' ? 'folders' : 'projects'}/${id}`, {
+          method: 'DELETE',
+        });
+        if (!structureResponse.ok) {
+          throw new Error(`No se pudo eliminar ${type === 'folder' ? 'la carpeta' : 'el proyecto'}.`);
+        }
+      }
+
+      setSelectedIds(new Set());
+      setDeleteConfirmTarget(null);
+      if (onRefresh) await onRefresh();
+      await fetchProjectsAndFolders();
     } catch (err) {
       console.error(err);
-      alert('Error al procesar la solicitud de eliminación.');
+      alert(err instanceof Error ? err.message : 'Error al procesar la solicitud de eliminación.');
     } finally {
       setIsDeleting(false);
     }
