@@ -3,8 +3,7 @@ import base64
 import logging
 import requests
 from pathlib import Path
-from typing import Dict, Any, List, Optional
-from PIL import Image
+from typing import Dict, Any
 
 from config import settings
 

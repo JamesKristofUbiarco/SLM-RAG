@@ -9,8 +9,8 @@ import uuid
 import json
 from typing import Optional, List, Dict, Any, Union
 from pydantic import BaseModel
-from fastapi import FastAPI, UploadFile, File, Form, Query, HTTPException, BackgroundTasks
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import FastAPI, UploadFile, File, Form, Query, HTTPException, BackgroundTasks, Request
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import run_in_threadpool
@@ -31,10 +31,19 @@ try:
 except Exception:
     pass
 
-from config import settings
+from config import ensure_ffmpeg_executable, settings
 from database import get_db, init_db
 from whisper_service import whisper_service
 from rag_service import rag_service
+from job_service import (
+    create_job,
+    get_job,
+    list_unfinished_jobs,
+    mark_interrupted_jobs,
+    submit_job,
+    update_job,
+)
+from security import copy_upload_limited, safe_filename
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -56,13 +65,25 @@ app = FastAPI(
 generating_summaries = set()
 
 # Enable CORS
+ALLOWED_ORIGINS = {origin.strip() for origin in settings.allowed_origins.split(",") if origin.strip()}
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=sorted(ALLOWED_ORIGINS),
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def reject_untrusted_browser_origins(request: Request, call_next):
+    """CORS does not stop cross-origin HTML forms; reject their mutations explicitly."""
+    if request.url.path.startswith("/api/") and request.method not in {"GET", "HEAD", "OPTIONS"}:
+        origin = request.headers.get("origin")
+        if origin and origin not in ALLOWED_ORIGINS:
+            return JSONResponse(status_code=403, content={"detail": "Origen del navegador no permitido"})
+    return await call_next(request)
 
 def cleanup_temp_file(filepath: Path):
     try:
@@ -81,9 +102,17 @@ def process_embeddings_background(transcription_id: int, text: str):
     except Exception as e:
         logger.error(f"Error in background embedding generation for transcription ID {transcription_id}: {str(e)}")
 
-def process_summary_background(transcription_id: int, filename: str, text: str, mode: str = "meeting"):
+def process_summary_background(
+    transcription_id: int,
+    filename: str,
+    text: str,
+    mode: str = "meeting",
+    job_id: Optional[str] = None,
+):
     """Background task to run Ollama summary generation and speaker participation analysis."""
     try:
+        if job_id:
+            update_job(job_id, "running", progress=10, message="Generando resumen")
         logger.info(f"Starting background LLM summary generation (mode='{mode}') for transcription ID {transcription_id}...")
         
         # Read segments from DB
@@ -130,17 +159,21 @@ def process_summary_background(transcription_id: int, filename: str, text: str, 
                 (transcription_id, summary_text, mode)
             )
             conn.commit()
+
+        if job_id:
+            update_job(job_id, "completed", progress=100, message="Resumen completado")
             
         logger.info(f"LLM summary generation complete (mode='{mode}') for transcription ID {transcription_id}.")
     except Exception as e:
         logger.error(f"Error generating summary for transcription ID {transcription_id}: {str(e)}")
+        if job_id:
+            update_job(job_id, "failed", error=str(e), message="Falló la generación del resumen")
     finally:
         generating_summaries.discard(transcription_id)
 
 # Mount static assets folder using absolute path and auto-create if missing
 ASSETS_DIR = STATIC_DIR / "assets"
-ASSETS_DIR.mkdir(parents=True, exist_ok=True)
-app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
+app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR), check_dir=False), name="assets")
 
 @app.get("/favicon.svg")
 async def get_favicon():
@@ -168,6 +201,15 @@ async def get_status():
         logger.error(f"Error checking status: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.get("/api/jobs/{job_id}")
+async def get_background_job(job_id: str):
+    """Return persistent status for an optional background job client."""
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Trabajo no encontrado")
+    return job
+
 import hashlib
 
 def calculate_file_hash(filepath: Path) -> str:
@@ -190,6 +232,7 @@ async def transcribe(
     file_path: Optional[str] = Form(None), # Support snake_case parameter from frontend
     backend: str = Form("whisperx"),
     model_name: Optional[str] = Form(None),
+    model: Optional[str] = Form(None),  # Backward-compatible alias used by older frontends
     language: Optional[str] = Form(None),
     align: bool = Form(True),
     diarize: bool = Form(False),
@@ -204,22 +247,7 @@ async def transcribe(
     """
     filePath = filePath or file_path
 
-    logger.info("Transcribe request received. Requesting Ollama to unload model and clearing VRAM...")
-    try:
-        rag_service.unload_model()
-    except Exception as e:
-        logger.warning(f"Failed to unload Ollama model: {str(e)}")
-        
-    try:
-        whisper_service._clear_memory()
-    except Exception as e:
-        logger.warning(f"Failed to clear whisper service VRAM: {str(e)}")
-        
-    try:
-        rag_service.unload_embedding_model()
-    except Exception as e:
-        logger.warning(f"Failed to unload embedding model: {str(e)}")
-        
+    logger.info("Transcribe request received.")
     start_request_time = time.time()
     
     # 1. Determine local file path
@@ -229,6 +257,8 @@ async def transcribe(
     media_filepath_for_db = ""
     
     if filePath:
+        if not settings.allow_local_file_paths:
+            raise HTTPException(status_code=403, detail="La lectura de rutas locales está deshabilitada.")
         # User passed a local filesystem path
         local_path = Path(filePath)
         if not local_path.is_absolute():
@@ -255,16 +285,18 @@ async def transcribe(
         logger.info(f"Using local filesystem path: {temp_filepath}")
     elif file:
         # User uploaded a file
-        original_filename = file.filename
+        original_filename = safe_filename(file.filename, "audio")
         temp_dir = Path(settings.upload_dir)
-        temp_filepath = temp_dir / f"upload_{os.urandom(8).hex()}_{file.filename}"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        temp_filepath = temp_dir / f"upload_{os.urandom(8).hex()}_{original_filename}"
         
         try:
-            with temp_filepath.open("wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
+            copy_upload_limited(file, temp_filepath)
             logger.info(f"Saved uploaded file to: {temp_filepath}")
             # Keep the uploaded file permanently for playback
             media_filepath_for_db = str(temp_filepath)
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Failed to save uploaded file: {str(e)}")
             raise HTTPException(status_code=500, detail="Failed to save uploaded file on server")
@@ -381,8 +413,15 @@ async def transcribe(
             
     # 3. Transcribe audio
     try:
-        model_name = model_name or settings.whisper_model
-        logger.info(f"Transcribing audio file {temp_filepath} using backend {backend} and model {model_name}...")
+        model_name = model_name or model or settings.whisper_model
+        language = language.strip().lower() if language and language.strip() else None
+        logger.info(
+            "Transcribing audio file %s using backend %s, model %s and language %s...",
+            temp_filepath,
+            backend,
+            model_name,
+            language or "auto",
+        )
         
         result = await run_in_threadpool(
             whisper_service.transcribe,
@@ -589,7 +628,6 @@ def prune_orphaned_media_sync():
 def ensure_ollama_started():
     import socket
     import subprocess
-    import os
     import time
     
     # 1. Check if port 11434 is listening
@@ -608,7 +646,6 @@ def ensure_ollama_started():
         
     # 2. Start local or global system Ollama binary in background
     ollama_local = BASE_DIR / "bin" / "ollama"
-    import shutil
     ollama_cmd = str(ollama_local) if ollama_local.exists() else shutil.which("ollama")
 
     if ollama_cmd:
@@ -645,12 +682,54 @@ def ensure_ollama_started():
 @app.on_event("startup")
 def startup_checks():
     logger.info("Initializing system startup checks...")
-    ensure_ollama_started()
-    deleted = prune_orphaned_media_sync()
-    if deleted:
-        logger.info(f"Startup Pruning: Cleaned up {len(deleted)} orphaned media files from uploads folder: {deleted}")
+    ensure_ffmpeg_executable()
+    if settings.host not in {"127.0.0.1", "localhost", "::1"}:
+        logger.warning(
+            "The API is configured for network exposure without authentication. "
+            "Use HOST=127.0.0.1 unless the surrounding network is trusted."
+        )
+    if settings.auto_start_ollama:
+        ensure_ollama_started()
+    unfinished_jobs = list_unfinished_jobs()
+    recovered_ids = set()
+    for job in unfinished_jobs:
+        if job["kind"] != "summary" or not job.get("resource_id"):
+            continue
+        try:
+            payload = json.loads(job.get("payload_json") or "{}")
+        except json.JSONDecodeError:
+            payload = {}
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT filename, text FROM transcriptions WHERE id = ?",
+                (job["resource_id"],),
+            ).fetchone()
+        if not row:
+            continue
+        generating_summaries.add(job["resource_id"])
+        update_job(job["id"], "pending", progress=0, message="Recuperado después del reinicio")
+        submit_job(
+            job["id"],
+            process_summary_background,
+            transcription_id=job["resource_id"],
+            filename=row["filename"],
+            text=row["text"],
+            mode=payload.get("mode", "meeting"),
+        )
+        recovered_ids.add(job["id"])
+    if recovered_ids:
+        logger.info(f"Recovered {len(recovered_ids)} persistent summary jobs after restart.")
+    interrupted = mark_interrupted_jobs(recovered_ids)
+    if interrupted:
+        logger.warning(f"Marked {interrupted} non-recoverable jobs as interrupted.")
+    if settings.prune_orphaned_on_startup:
+        deleted = prune_orphaned_media_sync()
+        if deleted:
+            logger.info(f"Startup Pruning: Cleaned up {len(deleted)} orphaned media files: {deleted}")
+        else:
+            logger.info("Startup Pruning: No orphaned files found in uploads folder.")
     else:
-        logger.info("Startup Pruning: No orphaned files found in uploads folder.")
+        logger.info("Startup Pruning is disabled; use POST /api/media/prune to run it explicitly.")
 
 @app.post("/api/media/prune")
 async def prune_orphaned_media():
@@ -689,15 +768,15 @@ async def concat_media_files(
         import re
         stems = []
         for idx, file in enumerate(files):
-            stem = Path(file.filename).stem
+            upload_name = safe_filename(file.filename, f"parte_{idx}")
+            stem = Path(upload_name).stem
             safe_st = re.sub(r'[^\w\s-]', '', stem).strip()
             safe_st = re.sub(r'[-\s]+', '_', safe_st)
             if safe_st:
                 stems.append(safe_st)
 
-            raw_path = temp_dir / f"raw_part_{idx}_{os.urandom(4).hex()}_{file.filename}"
-            with raw_path.open("wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
+            raw_path = temp_dir / f"raw_part_{idx}_{os.urandom(4).hex()}_{upload_name}"
+            copy_upload_limited(file, raw_path)
             saved_raw_paths.append(raw_path)
 
             wav_path = temp_dir / f"extracted_{idx}_{os.urandom(4).hex()}.wav"
@@ -711,7 +790,7 @@ async def concat_media_files(
             logger.info(f"Extracting intermediate WAV for part {idx}: {' '.join(wav_cmd)}")
             res = subprocess.run(wav_cmd, capture_output=True, text=True)
             if res.returncode != 0:
-                raise Exception(f"Error al extraer audio de parte {idx} ({file.filename}): {res.stderr}")
+                raise Exception(f"Error al extraer audio de parte {idx} ({upload_name}): {res.stderr}")
             wav_paths.append(wav_path)
             
         # 2. Build multi-part safe combined filename
@@ -764,6 +843,8 @@ async def concat_media_files(
             "concat_path": rel_output_path
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error during audio concatenation: {str(e)}")
         # Clean up in case of failure
@@ -814,7 +895,8 @@ def get_youtube_info_sync(url: str) -> dict:
         }
 
 def sanitize_filename(name: str) -> str:
-    import unicodedata, re
+    import unicodedata
+    import re
     # Normalize unicode characters (accents -> ascii equivalents)
     name = unicodedata.normalize('NFKD', name)
     name = name.encode('ascii', 'ignore').decode('ascii')
@@ -829,7 +911,7 @@ def sanitize_filename(name: str) -> str:
 def download_youtube_audio_sync(url: str) -> dict:
     import yt_dlp
     whisper_service.current_stage = "Descargando audio de YouTube"
-    whisper_service.current_progress = f"Extrayendo flujo de audio MP3 desde YouTube..."
+    whisper_service.current_progress = "Extrayendo flujo de audio MP3 desde YouTube..."
     try:
         out_dir = Path(settings.upload_dir) / "youtube"
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -1297,13 +1379,12 @@ async def semantic_search(
         
     try:
         # Generate embedding for query using our RAG service
-        rag_service._load_model()
-        query_vector = rag_service.model.encode(query, convert_to_numpy=True)
-        rag_service.unload_embedding_model()
+        query_vector = rag_service.generate_embeddings([query])[0]
         
         # Build SQL query to fetch chunks
         query_sql = """
-            SELECT c.id, c.transcription_id, c.text, c.embedding, t.filename
+            SELECT c.id, c.transcription_id, c.text, c.embedding,
+                   c.embedding_model, c.embedding_dimension, c.index_version, t.filename
             FROM chunks c
             JOIN transcriptions t ON c.transcription_id = t.id
         """
@@ -1318,12 +1399,13 @@ async def semantic_search(
         if not rows:
             return []
             
-        import pickle
         import numpy as np
         similarities = []
         
         for row in rows:
-            emb = pickle.loads(row["embedding"])
+            emb = rag_service.deserialize_embedding(row)
+            if emb.shape != query_vector.shape:
+                continue
             dot_product = np.dot(query_vector, emb)
             norm_q = np.linalg.norm(query_vector)
             norm_emb = np.linalg.norm(emb)
@@ -1357,21 +1439,20 @@ async def ingest_file(
     """
     from document_parser import parse_document
 
-    filename = file.filename or "archivo_desconocido.txt"
+    filename = safe_filename(file.filename, "archivo_desconocido.txt")
     docs_dir = BASE_DIR / "uploads" / "documents"
     docs_dir.mkdir(parents=True, exist_ok=True)
     
-    saved_filepath = docs_dir / filename
+    saved_filename = f"{uuid.uuid4().hex}_{filename}"
+    saved_filepath = docs_dir / saved_filename
     
     # Read and save uploaded file to disk
-    raw_content = await file.read()
-    if not raw_content:
+    copy_upload_limited(file, saved_filepath)
+    if saved_filepath.stat().st_size == 0:
+        saved_filepath.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail="El archivo está vacío.")
-        
-    with open(saved_filepath, "wb") as f:
-        f.write(raw_content)
 
-    rel_filepath = f"uploads/documents/{filename}"
+    rel_filepath = f"uploads/documents/{saved_filename}"
 
     # Parse document with Docling (fast) or Docling + Gemma 4 Multimodal (llm)
     try:
@@ -1379,6 +1460,7 @@ async def ingest_file(
         extracted_text = parsed.get("markdown", "")
     except Exception as e:
         logger.error(f"Error parsing document '{filename}': {str(e)}", exc_info=True)
+        saved_filepath.unlink(missing_ok=True)
         raise HTTPException(status_code=500, detail=f"Error al procesar el archivo '{filename}': {str(e)}")
 
     if not extracted_text.strip():
@@ -1410,7 +1492,7 @@ async def ingest_file(
 @app.post("/api/ingest_text_file")
 async def ingest_text_file(file: UploadFile = File(...)):
     """Alias for backwards compatibility."""
-    return await ingest_file(file)
+    return await ingest_file(file, mode="fast")
 
 # --- Web Page Ingestion Endpoint ---
 
@@ -1451,7 +1533,7 @@ async def ingest_web_url(payload: IngestWebUrlPayload):
             # Save extracted markdown to file in uploads directory
             upload_dir = Path(settings.upload_dir)
             upload_dir.mkdir(parents=True, exist_ok=True)
-            saved_file_path = upload_dir / parsed_data["filename"]
+            saved_file_path = upload_dir / safe_filename(parsed_data["filename"], "web_source.md")
             
             with open(saved_file_path, "w", encoding="utf-8") as f:
                 f.write(parsed_data["text"])
@@ -1591,7 +1673,7 @@ async def get_transcription_details(id: int):
     }
 
 @app.post("/api/transcriptions/{id}/summarize")
-async def trigger_summarization(id: int, background_tasks: BackgroundTasks, force: bool = False, mode: str = "meeting"):
+async def trigger_summarization(id: int, force: bool = False, mode: str = "meeting"):
     """Trigger background LLM summary generation for a specific transcription."""
     with get_db() as conn:
         row = conn.execute("SELECT id, filename, text FROM transcriptions WHERE id = ?", (id,)).fetchone()
@@ -1617,15 +1699,26 @@ async def trigger_summarization(id: int, background_tasks: BackgroundTasks, forc
         
     # Mark as generating and launch background task
     generating_summaries.add(id)
-    background_tasks.add_task(
+    job_id = create_job(
+        "summary",
+        resource_id=id,
+        message=f"Resumen '{mode}' en espera",
+        payload={"mode": mode},
+    )
+    submit_job(
+        job_id,
         process_summary_background,
         transcription_id=id,
         filename=row["filename"],
         text=row["text"],
-        mode=mode
+        mode=mode,
     )
     
-    return {"status": "started", "message": f"Generación de resumen (modo '{mode}') iniciada en segundo plano."}
+    return {
+        "status": "started",
+        "message": f"Generación de resumen (modo '{mode}') iniciada en segundo plano.",
+        "job_id": job_id,
+    }
 
 @app.get("/api/transcriptions/{id}/summary")
 async def get_transcription_summary(id: int):
@@ -1700,11 +1793,32 @@ async def get_chat_session_details(session_id: str):
             raise HTTPException(status_code=404, detail="Sesión de chat no encontrada.")
 
         history_rows = conn.execute(
-            "SELECT role, text FROM chat_history WHERE session_id = ? ORDER BY id ASC",
+            """SELECT role, text, web_sources_json, citations_json, search_logs_json
+               FROM chat_history WHERE session_id = ? ORDER BY id ASC""",
             (session_id,)
         ).fetchall()
 
-    messages = [{"role": r["role"], "content": r["text"]} for r in history_rows]
+    def _parse_json_col(val):
+        if not val:
+            return None
+        try:
+            return json.loads(val)
+        except Exception:
+            return None
+
+    messages = []
+    for r in history_rows:
+        msg = {"role": r["role"], "content": r["text"]}
+        ws = _parse_json_col(r["web_sources_json"])
+        ct = _parse_json_col(r["citations_json"])
+        sl = _parse_json_col(r["search_logs_json"])
+        if ws is not None:
+            msg["web_sources"] = ws
+        if ct is not None:
+            msg["citations"] = ct
+        if sl is not None:
+            msg["search_logs"] = sl
+        messages.append(msg)
 
     source_ids = []
     context_sources = session_row["context_sources"] or ""
@@ -1773,12 +1887,17 @@ async def import_chat_session(payload: ImportChatSessionPayload):
     title = payload.title.strip() if payload.title and payload.title.strip() else f"Importado {datetime.datetime.now().strftime('%d/%m %H:%M')}"
     sources = payload.context_sources or ""
 
-    first_target_id = 0
+    first_target_id: Optional[int] = None
     if sources and sources != "no_sources" and sources != "web_only":
         try:
             first_target_id = int(sources.split(",")[0].strip())
         except Exception:
-            first_target_id = 0
+            first_target_id = None
+    if first_target_id is not None:
+        with get_db() as conn:
+            exists = conn.execute("SELECT 1 FROM transcriptions WHERE id = ?", (first_target_id,)).fetchone()
+        if not exists:
+            first_target_id = None
 
     with get_db() as conn:
         conn.execute(
@@ -1837,7 +1956,7 @@ async def promote_web_source(payload: PromoteWebSourcePayload):
         
         upload_dir = Path(settings.upload_dir)
         upload_dir.mkdir(parents=True, exist_ok=True)
-        saved_file_path = upload_dir / parsed_data["filename"]
+        saved_file_path = upload_dir / safe_filename(parsed_data["filename"], "web_source.md")
         last_filename = parsed_data["filename"]
         
         with open(saved_file_path, "w", encoding="utf-8") as f:
@@ -1906,6 +2025,16 @@ async def chat_interaction(payload: ChatPayload):
     elif payload.transcription_id is not None:
         target_ids = [payload.transcription_id]
 
+    if target_ids:
+        placeholders = ",".join("?" for _ in target_ids)
+        with get_db() as conn:
+            rows = conn.execute(
+                f"SELECT id FROM transcriptions WHERE id IN ({placeholders})",
+                target_ids,
+            ).fetchall()
+        valid_ids = {row["id"] for row in rows}
+        target_ids = [source_id for source_id in target_ids if source_id in valid_ids]
+
     mode = payload.search_mode or "local"
     sources_key = ",".join(map(str, sorted(target_ids))) if target_ids else "no_sources"
 
@@ -1944,6 +2073,15 @@ async def chat_interaction(payload: ChatPayload):
     web_sources = []
     search_logs = []
 
+    # Fetch recent chat history early — needed for web search query reformulation (follow-ups)
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT role, text FROM chat_history WHERE session_id = ? ORDER BY id ASC",
+            (active_session_id,)
+        ).fetchall()
+
+    history = [{"role": r["role"], "content": r["text"]} for r in rows]
+
     if mode in ["web", "hybrid"]:
         import web_search_service
         web_res = await run_in_threadpool(
@@ -1952,7 +2090,8 @@ async def chat_interaction(payload: ChatPayload):
             search_depth=payload.search_depth or "quick",
             time_filter=payload.time_filter,
             domain_filter=payload.domain_filter,
-            similarity_threshold=payload.similarity_threshold or 0.50
+            similarity_threshold=payload.similarity_threshold or 0.50,
+            history=history
         )
         web_context = web_res.get("context_text", "")
         web_sources = web_res.get("web_sources", [])
@@ -1969,15 +2108,6 @@ async def chat_interaction(payload: ChatPayload):
     if not full_context:
         full_context = "No hay contexto de documentos locales ni búsquedas web. Responde utilizando únicamente tu conocimiento general preentrenado."
 
-    # Fetch recent chat history for active session
-    with get_db() as conn:
-        rows = conn.execute(
-            "SELECT role, text FROM chat_history WHERE session_id = ? ORDER BY id ASC",
-            (active_session_id,)
-        ).fetchall()
-        
-    history = [{"role": r["role"], "content": r["text"]} for r in rows]
-
     # Query LLM via Ollama
     logger.info(f"Querying local model {settings.llm_model}...")
     llm_response = await run_in_threadpool(
@@ -1988,15 +2118,23 @@ async def chat_interaction(payload: ChatPayload):
     )
 
     # Save message pair to history SQLite table
-    first_target_id = target_ids[0] if target_ids else 0
+    first_target_id = target_ids[0] if target_ids else None
     with get_db() as conn:
         conn.execute(
             "INSERT INTO chat_history (transcription_id, role, text, context_sources, session_id) VALUES (?, ?, ?, ?, ?)",
             (first_target_id, "user", message_str, sources_key, active_session_id)
         )
         conn.execute(
-            "INSERT INTO chat_history (transcription_id, role, text, context_sources, session_id) VALUES (?, ?, ?, ?, ?)",
-            (first_target_id, "assistant", llm_response, sources_key, active_session_id)
+            """INSERT INTO chat_history
+               (transcription_id, role, text, context_sources, session_id,
+                web_sources_json, citations_json, search_logs_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                first_target_id, "assistant", llm_response, sources_key, active_session_id,
+                json.dumps(web_sources, ensure_ascii=False) if web_sources else None,
+                json.dumps(citations, ensure_ascii=False) if citations else None,
+                json.dumps(search_logs, ensure_ascii=False) if search_logs else None,
+            )
         )
         conn.commit()
 
@@ -2232,7 +2370,7 @@ async def promote_note_to_source(id: int):
     if not note:
         raise HTTPException(status_code=404, detail="Nota no encontrada.")
 
-    filename = f"Nota_{note['id']}_{note['title'].replace(' ', '_')[:30]}.txt"
+    filename = safe_filename(f"Nota_{note['id']}_{note['title'].replace(' ', '_')[:30]}.txt", f"Nota_{note['id']}.txt")
     upload_dir = Path(settings.upload_dir)
     upload_dir.mkdir(parents=True, exist_ok=True)
     saved_file_path = upload_dir / filename

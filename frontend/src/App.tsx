@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Sidebar from './components/Sidebar';
 import TranscribeTab from './components/TranscribeTab';
 import SummaryTab from './components/SummaryTab';
@@ -9,7 +9,6 @@ import SourcesTab from './components/SourcesTab';
 import FilesTab from './components/FilesTab';
 import YouTubeTab from './components/YouTubeTab';
 import WebTab from './components/WebTab';
-import TranscriptionViewer from './components/TranscriptionViewer';
 import { Transcription, StatusData } from './types';
 
 export default function App() {
@@ -37,8 +36,9 @@ export default function App() {
   const [statusData, setStatusData] = useState<StatusData | null>(null);
   const [isPolling, setIsPolling] = useState<boolean>(false);
   
-  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const serverCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const serverCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const checkServerStatusRef = useRef<() => Promise<void>>(async () => undefined);
 
   // Fetch list of transcriptions from server
   const loadTranscriptions = async () => {
@@ -64,8 +64,22 @@ export default function App() {
         setLlmModel(data.llm_model);
         setHasHfToken(data.has_hf_token || false);
 
-        // Always update statusData so VRAM, GPU, etc. are visible even when idle
-        setStatusData(data);
+        // Update statusData only when values actually change to prevent unnecessary App re-renders
+        setStatusData(prev => {
+          if (!prev) return data;
+          if (
+            prev.is_running === data.is_running &&
+            prev.current_stage === data.current_stage &&
+            prev.progress === data.progress &&
+            prev.progress_text === data.progress_text &&
+            prev.gpu_name === data.gpu_name &&
+            prev.llm_model === data.llm_model &&
+            (!data.is_running || prev.vram_allocated_mb === data.vram_allocated_mb)
+          ) {
+            return prev;
+          }
+          return data;
+        });
 
         // If server reports a job is running but we are not polling in frontend, start polling!
         if (data.is_running && !isPolling) {
@@ -79,6 +93,7 @@ export default function App() {
       console.error('Server status check failed:', err);
     }
   };
+  checkServerStatusRef.current = checkServerStatus;
 
   // Poll status when a job is active
   const startPollingStatus = () => {
@@ -123,7 +138,7 @@ export default function App() {
         const data: StatusData = await res.json();
         setStatusData(data);
       }
-    } catch (e) {
+    } catch {
       setStatusData(prev => prev ? { ...prev, is_running: false, current_stage: 'Idle', current_progress: '' } : null);
     }
   };
@@ -153,10 +168,12 @@ export default function App() {
   // Initial load
   useEffect(() => {
     loadTranscriptions();
-    checkServerStatus();
+    void checkServerStatusRef.current();
 
     // Check status periodically for server heartbeat
-    serverCheckIntervalRef.current = setInterval(checkServerStatus, 5000);
+    serverCheckIntervalRef.current = setInterval(() => {
+      void checkServerStatusRef.current();
+    }, 5000);
 
     return () => {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);

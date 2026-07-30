@@ -7,24 +7,32 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
-# Desplegar FFmpeg automáticamente en el .venv local
-try:
-    ffmpeg_src = Path(imageio_ffmpeg.get_ffmpeg_exe())
-    scripts_dir = Path(sys.executable).parent
-    ffmpeg_dst = scripts_dir / "ffmpeg"
-    if not ffmpeg_dst.exists() and ffmpeg_src.exists():
-        shutil.copy2(ffmpeg_src, ffmpeg_dst)
-        print(f"FFmpeg desplegado en: {ffmpeg_dst}")
-except Exception as e:
-    print(f"Error al configurar FFmpeg: {e}")
+
+def ensure_ffmpeg_executable() -> None:
+    """Install the bundled FFmpeg next to Python during explicit app startup."""
+    try:
+        ffmpeg_src = Path(imageio_ffmpeg.get_ffmpeg_exe())
+        scripts_dir = Path(sys.executable).parent
+        ffmpeg_dst = scripts_dir / "ffmpeg"
+        if not ffmpeg_dst.exists() and ffmpeg_src.exists():
+            shutil.copy2(ffmpeg_src, ffmpeg_dst)
+            print(f"FFmpeg desplegado en: {ffmpeg_dst}")
+    except (OSError, RuntimeError) as exc:
+        print(f"Error al configurar FFmpeg: {exc}")
 
 ROOT_DIR = Path(__file__).parent.parent
 
 class Settings(BaseSettings):
-    host: str = "0.0.0.0"
+    host: str = "127.0.0.1"
     port: int = 8001
     upload_dir: str = str(ROOT_DIR / "uploads")
     db_path: str = str(ROOT_DIR / "data" / "database.db")
+    allowed_origins: str = "http://127.0.0.1:5173,http://localhost:5173"
+    max_upload_size_mb: int = 2048
+    max_web_download_mb: int = 50
+    allow_local_file_paths: bool = True
+    auto_start_ollama: bool = True
+    prune_orphaned_on_startup: bool = False
     
     # Whisper Configuration
     device: str = "cuda"
@@ -51,5 +59,15 @@ class Settings(BaseSettings):
     )
 
 settings = Settings()
-Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
-Path("data").mkdir(exist_ok=True)
+
+UPLOAD_DIR = Path(settings.upload_dir).expanduser()
+if not UPLOAD_DIR.is_absolute():
+    UPLOAD_DIR = ROOT_DIR / UPLOAD_DIR
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+settings.upload_dir = str(UPLOAD_DIR.resolve())
+
+DB_FILE = Path(settings.db_path).expanduser()
+if not DB_FILE.is_absolute():
+    DB_FILE = ROOT_DIR / DB_FILE
+DB_FILE.parent.mkdir(parents=True, exist_ok=True)
+settings.db_path = str(DB_FILE.resolve())

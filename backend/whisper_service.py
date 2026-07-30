@@ -102,21 +102,9 @@ class WhisperService:
             raise RuntimeError("Process aborted by user")
 
     def abort(self):
+        """Request cooperative cancellation at the next pipeline checkpoint."""
         self.abort_requested = True
-        if hasattr(self, 'transcribe_thread_id') and self.transcribe_thread_id:
-            tid = self.transcribe_thread_id
-            logger.warning(f"Forcing abort in transcription thread: {tid}")
-            
-            import ctypes
-            res = ctypes.pythonapi.PyThreadState_SetAsyncExc(
-                ctypes.c_long(tid), 
-                ctypes.py_object(RuntimeError)
-            )
-            if res == 0:
-                logger.error(f"Failed to raise abort exception: thread {tid} not found.")
-            elif res > 1:
-                ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_long(tid), None)
-                logger.error("PyThreadState_SetAsyncExc failed (returned > 1)")
+        logger.warning("Cooperative transcription cancellation requested.")
 
     import contextlib
     @contextlib.contextmanager
@@ -236,9 +224,10 @@ class WhisperService:
             
         return self._fw_models[cache_key]
 
-    def get_transcribe_model(self, model_name: str) -> Any:
-        """Cache and retrieve WhisperX transcription models on GPU/CPU."""
-        cache_key = f"{model_name}_{self.transcribe_device}_{self.transcribe_compute_type}"
+    def get_transcribe_model(self, model_name: str, language: Optional[str] = None) -> Any:
+        """Cache and retrieve a WhisperX pipeline configured for the requested language."""
+        language_key = language or "auto"
+        cache_key = f"{model_name}_{self.transcribe_device}_{self.transcribe_compute_type}_{language_key}"
         
         if cache_key not in self._transcribe_models:
             logger.info(f"Loading WhisperX transcription model '{model_name}' on '{self.transcribe_device}' with '{self.transcribe_compute_type}'...")
@@ -248,9 +237,15 @@ class WhisperService:
             self._transcribe_models[cache_key] = whisperx.load_model(
                 model_name, 
                 device=self.transcribe_device, 
-                compute_type=self.transcribe_compute_type
+                compute_type=self.transcribe_compute_type,
+                language=language,
             )
-            logger.info(f"WhisperX transcription model '{model_name}' loaded successfully on {self.transcribe_device.upper()}.")
+            logger.info(
+                "WhisperX transcription model '%s' loaded successfully on %s (language=%s).",
+                model_name,
+                self.transcribe_device.upper(),
+                language_key,
+            )
             
         return self._transcribe_models[cache_key]
 
@@ -303,7 +298,6 @@ class WhisperService:
         self._align_models.clear()
         self._diarize_pipelines.clear()
         
-        import gc
         gc.collect()
         gc.collect()
         if self.gpu_available:
@@ -370,32 +364,33 @@ class WhisperService:
     ) -> Dict[str, Any]:
         """Run transcription pipeline using selected backend (WhisperX, native Whisper, or Faster-Whisper)."""
         model_name = model_name or settings.whisper_model
+        language = language.strip().lower() if language and language.strip() else None
         hf_token = hf_token_override or settings.hf_token
         
-        logger.info(f"Starting transcription request: backend={backend}, file={audio_path}, model={model_name}")
-        
-        # Clear any leftover GPU memory from previous runs before starting a new one
-        self._clear_memory()
-        try:
-            from rag_service import rag_service
-            rag_service.unload_embedding_model()
-        except Exception as e:
-            logger.warning(f"Failed to unload embedding model inside whisper service: {str(e)}")
-        
+        logger.info(
+            "Starting transcription request: backend=%s, file=%s, model=%s, language=%s",
+            backend,
+            audio_path,
+            model_name,
+            language or "auto",
+        )
+
         self.abort_requested = False
-        self.transcribe_thread_id = threading.get_ident()
-        self.current_stage = "transcribing"
-        self.current_progress = "Iniciando monitor de recursos..."
-        
-        # Start background resource monitor
-        monitor = ResourceMonitor()
-        monitor.start()
-        
         from gpu_lock import gpu_lock
         gpu_lock_context = gpu_lock.acquire(f"Whisper Transcription ({backend}/{model_name})")
         gpu_lock_context.__enter__()
-        
+        monitor = None
         try:
+            # Model cleanup and transcription are one exclusive GPU operation.
+            from rag_service import rag_service
+            rag_service.unload_model()
+            self._clear_memory()
+            self.transcribe_thread_id = threading.get_ident()
+            self.current_stage = "transcribing"
+            self.current_progress = "Iniciando monitor de recursos..."
+
+            monitor = ResourceMonitor()
+            monitor.start()
             self.check_abort()
             
             if backend == "whisper":
@@ -588,7 +583,7 @@ class WhisperService:
                 # 1. Model Loading Time
                 self.current_progress = f"Cargando modelo de transcripción '{model_name}'..."
                 start_load = time.time()
-                model = self.get_transcribe_model(model_name)
+                model = self.get_transcribe_model(model_name, language)
                 load_time = time.time() - start_load
                 self.check_abort()
                 
@@ -762,8 +757,9 @@ class WhisperService:
             self.transcribe_thread_id = None
             self.current_stage = "Idle"
             self.current_progress = ""
-            monitor.stop()
-            monitor.join()
+            if monitor is not None:
+                monitor.stop()
+                monitor.join()
             try:
                 gpu_lock_context.__exit__(None, None, None)
             except Exception:

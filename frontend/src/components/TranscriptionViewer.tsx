@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, ChangeEvent } from 'react';
+import { useState, useEffect, useRef, ChangeEvent } from 'react';
 import { Transcription } from '../types';
 
 interface TranscriptionViewerProps {
@@ -17,41 +17,32 @@ export default function TranscriptionViewer({ transcriptionId, onDeleted }: Tran
 
   useEffect(() => {
     if (transcriptionId) {
-      loadTranscription(transcriptionId);
+      void (async () => {
+        setIsLoading(true);
+        try {
+          const res = await fetch(`/api/transcriptions/${transcriptionId}`);
+          if (!res.ok) throw new Error('No se pudo cargar la transcripción.');
+          setData(await res.json());
+        } catch (err) {
+          console.error(err);
+        } finally {
+          setIsLoading(false);
+        }
+      })();
     } else {
       setData(null);
     }
   }, [transcriptionId]);
-
-  const loadTranscription = async (id: number) => {
-    setIsLoading(true);
-    try {
-      const res = await fetch(`/api/transcriptions/${id}`);
-      if (!res.ok) throw new Error('No se pudo cargar la transcripción.');
-      const json = await res.json();
-      setData(json);
-      
-      // Load audio
-      if (audioRef.current) {
-        audioRef.current.playbackRate = playbackRate;
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
   const handleTimeUpdate = () => {
     const audio = audioRef.current;
     if (!audio || !cascadeRef.current) return;
     const time = audio.currentTime;
 
-    const wordSpans = cascadeRef.current.querySelectorAll('.word-span');
+    const wordSpans = cascadeRef.current.querySelectorAll<HTMLSpanElement>('.word-span');
     let activeSpan: HTMLSpanElement | null = null;
 
-    wordSpans.forEach((node) => {
-      const span = node as HTMLSpanElement;
+    for (const span of wordSpans) {
       const startAttr = span.getAttribute('data-start');
       const endAttr = span.getAttribute('data-end');
       if (!startAttr || !endAttr) return;
@@ -65,7 +56,7 @@ export default function TranscriptionViewer({ transcriptionId, onDeleted }: Tran
       } else {
         span.classList.remove('highlight');
       }
-    });
+    }
 
     if (activeSpan && autoscroll) {
       const cascadeContainer = cascadeRef.current;

@@ -1,10 +1,9 @@
 import React, { useState, useEffect, useRef, FormEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Marked } from 'marked';
-import { Transcription, Message, Project, Folder, ChatSession, WebSource, CitationItem } from '../types';
+import { Transcription, Message, Project, Folder, ChatSession, CitationItem } from '../types';
 import FolderTree from './FolderTree';
-
-const marked = new Marked();
+import { markdownToSafeHtml } from '../utils/markdown';
+import { renderCitationBadgesInHtml } from '../utils/citations';
 
 interface ChatTabProps {
   transcriptionList: Transcription[];
@@ -119,35 +118,27 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
   };
 
   // Toggle all sources in a folder
-  const handleToggleFolder = (folderId: number) => {
-    const folderSources = transcriptionList.filter(s => s.folder_id === folderId).map(s => s.id);
+  const handleToggleFolder = (_folderId: number, folderSources: number[], _childFolderIds: number[], forceState?: boolean) => {
     if (folderSources.length === 0) return;
 
     const allSelected = folderSources.every(id => selectedSourceIds.has(id));
+    const shouldSelect = forceState ?? !allSelected;
     setSelectedSourceIds(prev => {
       const next = new Set(prev);
-      if (allSelected) {
-        folderSources.forEach(id => next.delete(id));
-      } else {
-        folderSources.forEach(id => next.add(id));
-      }
+      folderSources.forEach(id => shouldSelect ? next.add(id) : next.delete(id));
       return next;
     });
   };
 
   // Toggle all sources in a project
-  const handleToggleProject = (projectId: number) => {
-    const projectSources = transcriptionList.filter(s => s.project_id === projectId).map(s => s.id);
+  const handleToggleProject = (_projectId: number | null, projectSources: number[], forceState?: boolean) => {
     if (projectSources.length === 0) return;
 
     const allSelected = projectSources.every(id => selectedSourceIds.has(id));
+    const shouldSelect = forceState ?? !allSelected;
     setSelectedSourceIds(prev => {
       const next = new Set(prev);
-      if (allSelected) {
-        projectSources.forEach(id => next.delete(id));
-      } else {
-        projectSources.forEach(id => next.add(id));
-      }
+      projectSources.forEach(id => shouldSelect ? next.add(id) : next.delete(id));
       return next;
     });
   };
@@ -408,13 +399,69 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
     }
   };
 
-  const renderMarkdown = (text: string) => {
-    if (!text) return { __html: '' };
-    marked.use({ breaks: true, gfm: true });
-    let rawHtml = marked.parse(text) as string;
-    // Replace citation tags [1], [2] with stylized inline badge spans
-    rawHtml = rawHtml.replace(/\[(\d+)\]/g, '<span class="inline-flex items-center justify-center px-1.5 py-0.2 mx-0.5 text-[10px] font-bold text-zinc-950 bg-amber-400 rounded-full cursor-pointer hover:bg-amber-300 transition-colors shadow-sm" title="Cita [$1]">$1</span>');
-    return { __html: rawHtml };
+const MemoizedMarkdownText = React.memo(function MemoizedMarkdownText({ content }: { content: string }) {
+  const html = React.useMemo(() => {
+    if (!content) return { __html: '' };
+    const safeHtml = markdownToSafeHtml(content, renderCitationBadgesInHtml);
+    return { __html: safeHtml };
+  }, [content]);
+
+  return (
+    <div
+      className="prose prose-invert max-w-none space-y-2 text-zinc-200"
+      dangerouslySetInnerHTML={html}
+    />
+  );
+});
+
+  const handleMessageCitationClick = (e: React.MouseEvent<HTMLDivElement>, msg: Message, msgIndex: number) => {
+    const target = (e.target as HTMLElement).closest('[data-citation]');
+    if (!target) return;
+
+    const citeNum = parseInt(target.getAttribute('data-citation') || '0', 10);
+    if (!citeNum) return;
+    const citationKind = target.getAttribute('data-citation-kind') || 'legacy';
+
+    const openLocalCitation = () => {
+      if (!msg.citations || msg.citations.length === 0) return false;
+      const localCite = msg.citations.find(c => c.num === citeNum);
+      if (localCite) {
+        setSelectedCitation(localCite);
+        return true;
+      }
+      return false;
+    };
+
+    const openWebCitation = () => {
+      if (!msg.web_sources || msg.web_sources.length === 0) return false;
+      const webSrc = msg.web_sources.find(s => s.num === citeNum) || msg.web_sources[citeNum - 1];
+      if (webSrc) {
+        const cardEl = document.getElementById(`web-src-card-${msgIndex}-${webSrc.num || citeNum}`);
+        if (cardEl) {
+          cardEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          cardEl.classList.add('ring-2', 'ring-sky-400', 'bg-sky-500/20');
+          setTimeout(() => cardEl.classList.remove('ring-2', 'ring-sky-400', 'bg-sky-500/20'), 2500);
+        }
+        if (webSrc.url) {
+          window.open(webSrc.url, '_blank', 'noopener,noreferrer');
+        }
+        return true;
+      }
+      return false;
+    };
+
+    if (citationKind === 'local') {
+      openLocalCitation();
+      return;
+    }
+    if (citationKind === 'web') {
+      openWebCitation();
+      return;
+    }
+
+    // Backward compatibility for old numeric-only conversations. When both
+    // collections exist, retain the historical local-first behavior.
+    if (!openLocalCitation()) openWebCitation();
   };
 
   const formatDate = (isoStr?: string) => {
@@ -694,11 +741,14 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
                     </div>
                   )}
                   
-                  <div className={`p-4 rounded-2xl text-sm leading-relaxed ${
-                    msg.role === 'user'
-                      ? 'bg-amber-500/20 text-white border border-amber-500/30 rounded-tr-none'
-                      : 'bg-white/[0.04] text-zinc-200 border border-white/10 rounded-tl-none w-full'
-                  }`}>
+                  <div
+                    className={`p-4 rounded-2xl text-sm leading-relaxed ${
+                      msg.role === 'user'
+                        ? 'bg-amber-500/20 text-white border border-amber-500/30 rounded-tr-none'
+                        : 'bg-white/[0.04] text-zinc-200 border border-white/10 rounded-tl-none w-full'
+                    }`}
+                    onClick={(e) => handleMessageCitationClick(e, msg, index)}
+                  >
                     {/* Glassbox Live Research Stream Card */}
                     {msg.role === 'assistant' && msg.search_logs && msg.search_logs.length > 0 && (
                       <div className="mb-3 p-3 rounded-lg bg-slate-950/80 border border-sky-500/30 text-xs">
@@ -713,52 +763,104 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
                       </div>
                     )}
 
-                    <div 
-                      className="prose prose-invert max-w-none space-y-2 text-zinc-200"
-                      dangerouslySetInnerHTML={renderMarkdown(msg.content)}
-                    ></div>
+                    <MemoizedMarkdownText content={msg.content} />
                     
                     {/* Real Web Source Badges */}
-                    {msg.role === 'assistant' && msg.web_sources && msg.web_sources.length > 0 && (
-                      <div className="mt-3 pt-2 border-t border-white/10 flex flex-col gap-1.5">
-                        <span className="text-xs font-semibold text-sky-400 flex items-center gap-1">
-                          <i className="fa-solid fa-globe"></i> Fuentes Web Verificadas ({msg.web_sources.length}):
-                        </span>
-                        <div className="flex flex-col gap-1">
-                          {msg.web_sources.map((wSrc, wIdx) => (
-                            <div key={wIdx} className="flex items-center justify-between p-2 rounded-lg bg-white/[0.03] border border-white/10 text-xs">
-                              <a
-                                href={wSrc.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-sky-300 hover:underline truncate max-w-[75%]"
-                              >
-                                <i className="fa-solid fa-arrow-up-right-from-square mr-1 text-[10px]"></i>
-                                [{wSrc.domain}] {wSrc.title}
-                              </a>
-                              <button
-                                type="button"
-                                className="px-2 py-0.5 text-[11px] font-medium text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 rounded border border-emerald-500/20 flex items-center gap-1 cursor-pointer"
-                                onClick={() => {
-                                  setPromoteTargetUrl(wSrc.url);
-                                  setPromoteProjectId('');
-                                  setPromoteFolderId('');
-                                }}
-                                title="Guardar fuente web completa en Proyecto"
-                              >
-                                <i className="fa-solid fa-floppy-disk"></i> Guardar
-                              </button>
-                            </div>
-                          ))}
+                    {msg.role === 'assistant' && msg.web_sources && msg.web_sources.length > 0 && (() => {
+                      const relevant = msg.web_sources.filter(s => s.relevant !== false);
+                      const notRelevant = msg.web_sources.filter(s => s.relevant === false);
+                      return (
+                        <div className="mt-3 pt-2 border-t border-white/10 flex flex-col gap-1.5">
+                          <span className="text-xs font-semibold text-sky-400 flex items-center gap-1">
+                            <i className="fa-solid fa-globe"></i> Fuentes Web ({msg.web_sources.length}):
+                          </span>
+                          <div className="flex flex-col gap-1">
+                            {relevant.map((wSrc, wIdx) => {
+                              const sNum = wSrc.num || (wIdx + 1);
+                              return (
+                                <div
+                                  key={`rel-${wIdx}`}
+                                  id={`web-src-card-${index}-${sNum}`}
+                                  className="flex items-center justify-between p-2 rounded-lg bg-white/[0.03] border border-white/10 text-xs transition-all"
+                                >
+                                  <a
+                                    href={wSrc.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-sky-300 hover:underline truncate max-w-[75%] flex items-center gap-1.5"
+                                  >
+                                    <span className="px-1.5 py-0.5 rounded bg-sky-500/25 text-sky-300 border border-sky-500/40 font-bold text-[10px] shrink-0">
+                                      [W{sNum}]
+                                    </span>
+                                    <i className="fa-solid fa-arrow-up-right-from-square mr-0.5 text-[10px]"></i>
+                                    <span className="truncate">[{wSrc.domain}] {wSrc.title}</span>
+                                  </a>
+                                  <div className="flex items-center gap-1.5 shrink-0">
+                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">usada</span>
+                                    <button
+                                      type="button"
+                                      className="px-2 py-0.5 text-[11px] font-medium text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 rounded border border-emerald-500/20 flex items-center gap-1 cursor-pointer"
+                                      onClick={() => {
+                                        setPromoteTargetUrl(wSrc.url);
+                                        setPromoteProjectId('');
+                                        setPromoteFolderId('');
+                                      }}
+                                      title="Guardar fuente web completa en Proyecto"
+                                    >
+                                      <i className="fa-solid fa-floppy-disk"></i> Guardar
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                            {notRelevant.map((wSrc, wIdx) => {
+                              const sNum = wSrc.num || (relevant.length + wIdx + 1);
+                              return (
+                                <div
+                                  key={`nrel-${wIdx}`}
+                                  id={`web-src-card-${index}-${sNum}`}
+                                  className="flex items-center justify-between p-2 rounded-lg bg-white/[0.02] border border-white/[0.06] text-xs opacity-60 transition-all"
+                                >
+                                  <a
+                                    href={wSrc.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-zinc-400 hover:text-zinc-300 hover:underline truncate max-w-[75%] flex items-center gap-1.5"
+                                  >
+                                    <span className="px-1.5 py-0.5 rounded bg-zinc-500/20 text-zinc-400 border border-zinc-500/30 font-bold text-[10px] shrink-0">
+                                      [W{sNum}]
+                                    </span>
+                                    <i className="fa-solid fa-arrow-up-right-from-square mr-0.5 text-[10px]"></i>
+                                    <span className="truncate">[{wSrc.domain}] {wSrc.title}</span>
+                                  </a>
+                                  <div className="flex items-center gap-1.5 shrink-0">
+                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-zinc-500/15 text-zinc-500 border border-zinc-500/20">sin contexto relevante</span>
+                                    <button
+                                      type="button"
+                                      className="px-2 py-0.5 text-[11px] font-medium text-zinc-400 bg-white/5 hover:bg-white/10 rounded border border-white/10 flex items-center gap-1 cursor-pointer"
+                                      onClick={() => {
+                                        setPromoteTargetUrl(wSrc.url);
+                                        setPromoteProjectId('');
+                                        setPromoteFolderId('');
+                                      }}
+                                      title="Guardar fuente web completa en Proyecto"
+                                    >
+                                      <i className="fa-solid fa-floppy-disk"></i> Guardar
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      );
+                    })()}
 
                     {/* Clickable Citation Badges */}
                     {msg.role === 'assistant' && msg.citations && msg.citations.length > 0 && (
                       <div className="mt-3 pt-2.5 border-t border-white/10 flex flex-col gap-2">
                         <span className="text-xs font-semibold text-amber-400 flex items-center gap-1.5">
-                          <i className="fa-solid fa-quote-left"></i> Citas de Fuentes ({msg.citations.length}):
+                          <i className="fa-solid fa-quote-left"></i> Fragmentos de Fuentes Locales ({msg.citations.length}):
                         </span>
                         <div className="flex flex-wrap gap-2">
                           {msg.citations.map((c) => (
@@ -768,7 +870,7 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
                               className="px-2.5 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/35 text-amber-300 text-xs font-medium flex items-center gap-1.5 cursor-pointer transition-all"
                               onClick={() => setSelectedCitation(c)}
                             >
-                              <span className="px-1.5 py-0.5 rounded bg-amber-500 text-zinc-950 font-bold text-[10px]">[{c.num}]</span>
+                              <span className="px-1.5 py-0.5 rounded bg-amber-500 text-zinc-950 font-bold text-[10px]">[L{c.num}]</span>
                               <span className="truncate max-w-[190px]">{c.filename}</span>
                             </button>
                           ))}
@@ -794,7 +896,7 @@ export default function ChatTab({ transcriptionList, activeId, setActiveId, acti
                                 })
                               });
                               if (res.ok) alert('¡Fragmento guardado con éxito en tu Cuaderno de Notas!');
-                            } catch (e) {
+                            } catch {
                               alert('Error al guardar la nota en el cuaderno.');
                             }
                           }}

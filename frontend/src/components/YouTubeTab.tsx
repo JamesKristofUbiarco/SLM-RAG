@@ -1,4 +1,4 @@
-import React, { useState, ChangeEvent, FormEvent } from 'react';
+import { useState, ChangeEvent, FormEvent } from 'react';
 import { StatusData, Transcription } from '../types';
 import TranscriptionHistoryBox from './TranscriptionHistoryBox';
 
@@ -32,7 +32,7 @@ export default function YouTubeTab({
   statusData,
   startPollingStatus,
   stopPollingStatus,
-  hasHfToken = false,
+  hasHfToken: _hasHfToken = false,
   onRedirectToTranscriptionPath,
   transcriptionList = [],
   activeTranscriptionId,
@@ -68,7 +68,7 @@ export default function YouTubeTab({
   const [model, setModel] = useState<string>('large-v3');
   const [language, setLanguage] = useState<string>('');
   const [diarize, setDiarize] = useState<boolean>(true);
-  const [hfToken, setHfToken] = useState<string>('');
+  const [hfToken] = useState<string>('');
   const [align, setAlign] = useState<boolean>(true);
 
   const handleBackendChange = (e: ChangeEvent<HTMLSelectElement>) => {

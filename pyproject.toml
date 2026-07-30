@@ -44,6 +44,11 @@ name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
+[dependency-groups]
+dev = [
+    "ruff>=0.16.0",
+]
+
 [tool.uv]
 environments = [
     "sys_platform == 'linux' and platform_machine == 'x86_64'"
@@ -52,3 +57,10 @@ override-dependencies = [
     "numba>=0.60.0",
     "llvmlite>=0.43.0"
 ]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F"]
+ignore = ["E402", "E501"]

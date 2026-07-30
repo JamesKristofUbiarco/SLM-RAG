@@ -98,6 +98,8 @@ uv run uvicorn backend.main:app --host 127.0.0.1 --port 8001 --reload
 ```
 *El servidor backend estará disponible en `http://localhost:8001`.*
 
+Por seguridad, el servidor escucha en `127.0.0.1` de forma predeterminada. No lo expongas a la red sin añadir autenticación y configurar explícitamente `ALLOWED_ORIGINS`.
+
 ### Paso 3: Iniciar el Frontend (Servidor de Desarrollo)
 En otra terminal, ejecuta el frontend en modo de desarrollo:
 ```bash
@@ -107,6 +109,17 @@ pnpm run dev
 *La interfaz web se abrirá en `http://localhost:5173`.*
 
 > **Nota para Producción**: Puedes compilar el frontend ejecutando `pnpm run build` en el directorio `frontend/`. El backend servirá los archivos estáticos compilados directamente.
+
+### Comprobaciones antes de ejecutar
+
+```bash
+# Backend: migraciones aisladas, límites de archivos y protección SSRF
+PYTHONPATH=backend uv run python -m unittest discover -s tests -v
+uv run ruff check backend tests
+
+# Frontend: tipos, lint y compilación de producción
+pnpm --dir frontend run check
+```
 
 ---
 

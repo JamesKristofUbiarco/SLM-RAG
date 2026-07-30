@@ -1,22 +1,39 @@
 import sqlite3
-import json
-import pickle
-from pathlib import Path
-from typing import List, Dict, Any, Tuple
-from config import settings
+import datetime
+from config import DB_FILE
 
-DB_PATH = Path(__file__).parent.parent / "data" / "database.db"
+DB_PATH = DB_FILE
+SCHEMA_VERSION = 3
+
+
+def _backup_before_migration() -> None:
+    if not DB_PATH.exists() or DB_PATH.stat().st_size == 0:
+        return
+    with sqlite3.connect(str(DB_PATH)) as source:
+        current_version = source.execute("PRAGMA user_version").fetchone()[0]
+        if current_version >= SCHEMA_VERSION:
+            return
+        backup_dir = DB_PATH.parent / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = backup_dir / f"{DB_PATH.stem}_v{current_version}_{timestamp}.db"
+        with sqlite3.connect(str(backup_path)) as destination:
+            source.backup(destination)
 
 def get_db():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(DB_PATH), timeout=30.0)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA busy_timeout = 30000")
     return conn
 
 def init_db():
     # Make sure target directory exists
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _backup_before_migration()
     with get_db() as conn:
+        conn.execute("PRAGMA journal_mode = WAL")
         # Principal transcription history table
         conn.execute("""
         CREATE TABLE IF NOT EXISTS transcriptions (
@@ -137,6 +154,24 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
+        # Required by current chat queries. This migration must also exist for
+        # databases created from scratch, not only for historical installations.
+        try:
+            conn.execute("ALTER TABLE chat_history ADD COLUMN context_sources TEXT")
+        except sqlite3.OperationalError:
+            pass
+
+        # Migration: add metadata columns for web_sources, citations, search_logs
+        for col in [
+            "web_sources_json TEXT",
+            "citations_json TEXT",
+            "search_logs_json TEXT"
+        ]:
+            try:
+                conn.execute(f"ALTER TABLE chat_history ADD COLUMN {col}")
+            except sqlite3.OperationalError:
+                pass
+
         # Notebook Notes table
         conn.execute("""
         CREATE TABLE IF NOT EXISTS notes (
@@ -148,6 +183,48 @@ def init_db():
         )
         """)
 
-        conn.commit()
+        # Persistent state for background operations. Existing endpoints remain
+        # compatible while clients can optionally inspect individual jobs.
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS jobs (
+            id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            resource_id INTEGER,
+            status TEXT NOT NULL,
+            progress INTEGER DEFAULT 0,
+            message TEXT,
+            error TEXT,
+            payload_json TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            started_at TIMESTAMP,
+            finished_at TIMESTAMP
+        )
+        """)
+        try:
+            conn.execute("ALTER TABLE jobs ADD COLUMN payload_json TEXT")
+        except sqlite3.OperationalError:
+            pass
 
-init_db()
+        # Index/version metadata makes embedding compatibility explicit while
+        # keeping all existing vectors readable.
+        for col in [
+            "embedding_model TEXT",
+            "embedding_dimension INTEGER",
+            "index_version INTEGER DEFAULT 1"
+        ]:
+            try:
+                conn.execute(f"ALTER TABLE chunks ADD COLUMN {col}")
+            except sqlite3.OperationalError:
+                pass
+
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_chunks_transcription_id ON chunks(transcription_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_transcriptions_file_hash ON transcriptions(file_hash)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_transcriptions_project_id ON transcriptions(project_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_transcriptions_folder_id ON transcriptions(folder_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_folders_project_id ON folders(project_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_folders_parent_id ON folders(parent_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_history_session_id ON chat_history(session_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_resource ON jobs(kind, resource_id, status)")
+
+        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        conn.commit()

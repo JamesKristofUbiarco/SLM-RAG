@@ -7,7 +7,9 @@ logger = logging.getLogger("uvicorn")
 
 class GPULock:
     def __init__(self):
-        self._lock = threading.Lock()
+        # Re-entrant so a GPU pipeline can call another protected cleanup
+        # operation without deadlocking the same worker thread.
+        self._lock = threading.RLock()
         
     @contextlib.contextmanager
     def acquire(self, task_name: str = "GPU Task"):

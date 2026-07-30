@@ -1,9 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Marked } from 'marked';
 import { Transcription } from '../types';
-import { isAudioVideoTranscription } from './TranscriptionHistoryBox';
-
-const marked = new Marked();
+import { isAudioVideoTranscription } from '../utils/source';
+import { markdownToSafeHtml } from '../utils/markdown';
 
 type SummaryMode = 'meeting' | 'essay' | 'recipe' | 'doc_executive' | 'doc_analysis' | 'web_digest';
 
@@ -14,14 +12,14 @@ interface SummaryTabProps {
   active: boolean;
 }
 
-export default function SummaryTab({ transcriptionList, activeId, setActiveId, active }: SummaryTabProps) {
+const SummaryTab = React.memo(function SummaryTab({ transcriptionList, activeId, setActiveId, active }: SummaryTabProps) {
   const [selectedId, setSelectedId] = useState<number | ''>(activeId || '');
   const [summaryData, setSummaryData] = useState<Transcription | null>(null);
   const [summaryMode, setSummaryMode] = useState<SummaryMode>('meeting');
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   
-  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const selectedItem = transcriptionList.find((item) => item.id === selectedId);
@@ -46,7 +44,7 @@ export default function SummaryTab({ transcriptionList, activeId, setActiveId, a
         }
       }
     }
-  }, [selectedId, isMedia]);
+  }, [isMedia, selectedItem, summaryData?.summary_mode]);
 
   // Load summary details when selectedId changes
   useEffect(() => {
@@ -135,18 +133,15 @@ export default function SummaryTab({ transcriptionList, activeId, setActiveId, a
   };
 
   const transformTimestampsToButtons = (html: string): string => {
-    return html.replace(/(?:\[)?(\b\d{1,2}:\d{2}(?::\d{2})?\b)(?:\])?/g, (match, p1) => {
+    return html.replace(/(?:\[)?(\b\d{1,2}:\d{2}(?::\d{2})?\b)(?:\])?/g, (_match, p1) => {
       return `<button class="timestamp-btn" data-time="${p1}"><i class="fa-solid fa-play" style="font-size: 0.7em;"></i> ${p1}</button>`;
     });
   };
 
   const renderMarkdown = (text?: string) => {
     if (!text) return { __html: '' };
-    marked.use({ breaks: true, gfm: true });
     const preprocessed = preprocessMarkdown(text);
-    const rawHtml = marked.parse(preprocessed) as string;
-    const processedHtml = transformTimestampsToButtons(rawHtml);
-    return { __html: processedHtml };
+    return { __html: markdownToSafeHtml(preprocessed, transformTimestampsToButtons) };
   };
 
   const handleSummaryContainerClick = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -375,4 +370,6 @@ export default function SummaryTab({ transcriptionList, activeId, setActiveId, a
       )}
     </section>
   );
-}
+});
+
+export default SummaryTab;

@@ -1,16 +1,18 @@
-import React, { useState, useEffect, ChangeEvent } from 'react';
+import React, { useState, useEffect, useRef, ChangeEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Transcription, ChunkItem, Project, Folder, NoteItem } from '../types';
+import { Transcription, ChunkItem, Project, Folder, NoteItem, StudioResumePayload } from '../types';
 import FolderTree from './FolderTree';
+import { normalizeStudioArtifact, recoverFlashcards } from '../utils/studioArtifacts';
 
 interface SourcesTabProps {
   transcriptionList: Transcription[];
   onRefresh?: () => Promise<void>;
-  onResumeInStudio?: (payload: any) => void;
+  onResumeInStudio?: (payload: StudioResumePayload) => void;
   active: boolean;
 }
 
-export default function SourcesTab({ transcriptionList, onRefresh, onResumeInStudio, active }: SourcesTabProps) {
+const SourcesTab = React.memo(function SourcesTab({ transcriptionList, onRefresh, onResumeInStudio, active }: SourcesTabProps) {
+  const onRefreshRef = useRef(onRefresh);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
   const [viewMode, setViewMode] = useState<'hierarchy' | 'table'>('hierarchy');
@@ -115,9 +117,8 @@ export default function SourcesTab({ transcriptionList, onRefresh, onResumeInStu
 
   const handleExportFlashcardsCSV = (noteTitle: string, rawContent: string) => {
     try {
-      const parsed = typeof rawContent === 'string' ? JSON.parse(rawContent) : rawContent;
-      const cards = parsed.data || parsed.flashcards || [];
-      if (!Array.isArray(cards) || cards.length === 0) {
+      const cards = recoverFlashcards(rawContent);
+      if (!cards) {
         alert('No se encontraron flashcards válidas en esta nota.');
         return;
       }
@@ -139,7 +140,7 @@ export default function SourcesTab({ transcriptionList, onRefresh, onResumeInStu
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
-    } catch (e) {
+    } catch {
       alert('Error al exportar las flashcards a CSV.');
     }
   };
@@ -159,10 +160,14 @@ export default function SourcesTab({ transcriptionList, onRefresh, onResumeInStu
   };
 
   useEffect(() => {
+    onRefreshRef.current = onRefresh;
+  }, [onRefresh]);
+
+  useEffect(() => {
     if (active) {
       fetchProjectsAndFolders();
       fetchNotes();
-      if (onRefresh) onRefresh();
+      void onRefreshRef.current?.();
     }
   }, [active]);
 
@@ -559,8 +564,14 @@ export default function SourcesTab({ transcriptionList, onRefresh, onResumeInStu
               selectedSourceIds={selectedIds}
               onToggleSource={handleToggleRow}
               onCreateFolder={openCreateFolderModal}
-              onDeleteFolder={handleDeleteFolder}
-              onDeleteProject={handleDeleteProject}
+              onDeleteFolder={(folderId) => handleDeleteFolder(
+                folderId,
+                folders.find(folder => folder.id === folderId)?.name || 'esta carpeta',
+              )}
+              onDeleteProject={(projectId) => handleDeleteProject(
+                projectId,
+                projects.find(project => project.id === projectId)?.name || 'este proyecto',
+              )}
               onMoveSource={openMoveSourceModal}
               isManagementMode={true}
             />
@@ -695,7 +706,7 @@ export default function SourcesTab({ transcriptionList, onRefresh, onResumeInStu
                   try {
                     const parsed = JSON.parse(n.content);
                     if (parsed.content) displayContent = parsed.content;
-                  } catch (e) {}
+                  } catch {}
                 }
 
                 return (
@@ -739,25 +750,12 @@ export default function SourcesTab({ transcriptionList, onRefresh, onResumeInStu
                             className="px-2.5 py-1 rounded bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold cursor-pointer transition-all flex items-center gap-1 shadow-sm"
                             onClick={() => {
                               try {
-                                let parsed: any = null;
-                                if (typeof n.content === 'string' && n.content.trim().startsWith('{')) {
-                                  try { parsed = JSON.parse(n.content); } catch (e) { parsed = null; }
-                                }
-                                
                                 const rawMode = n.source_type?.replace('studio_', '') || 'briefing';
-                                const mode = parsed?.artifact_type || parsed?.type || rawMode;
-                                const artifactType = parsed?.type || (mode === 'quiz' || mode === 'flashcards' ? mode : 'markdown');
-                                
-                                const payload = {
-                                  type: artifactType,
-                                  artifact_type: mode,
-                                  title: parsed?.title || n.title,
-                                  content: parsed?.content || n.content,
-                                  data: parsed?.data || parsed?.quiz || parsed?.flashcards || []
-                                };
+                                const payload = normalizeStudioArtifact(n.content, rawMode);
+                                payload.title = typeof payload.title === 'string' ? payload.title : n.title;
                                 
                                 onResumeInStudio?.(payload);
-                              } catch (e) {
+                              } catch {
                                 alert('No se pudo decodificar el contenido de Studio.');
                               }
                             }}
@@ -1141,4 +1139,6 @@ export default function SourcesTab({ transcriptionList, onRefresh, onResumeInStu
       )}
     </section>
   );
-}
+});
+
+export default SourcesTab;

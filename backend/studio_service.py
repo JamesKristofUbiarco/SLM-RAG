@@ -1,8 +1,7 @@
-import json
 import logging
 from typing import List, Dict, Any, Optional
-from config import settings
 from rag_service import rag_service
+from studio_artifacts import parse_studio_items, studio_output_schema
 
 logger = logging.getLogger("studio_service")
 
@@ -96,61 +95,77 @@ Fuentes:
         elif artifact_type == "quiz":
             prompt = f"""Basándote en las siguientes fuentes, crea un **Examen de Opción Múltiple (Quiz)** de exactamente {count} preguntas con nivel de dificultad '{difficulty}'.
 {custom_prompt_part}
-DEBES responder EXCLUSIVAMENTE con una estructura JSON estricta (sin markdown, sin bloques ```json, únicamente el JSON puro) con este formato exacto:
+DEBES responder EXCLUSIVAMENTE con una estructura JSON estricta con este formato exacto:
 
-[
-  {{
-    "id": 1,
-    "question": "Pregunta detallada aquí",
-    "options": ["Opción A", "Opción B", "Opción C", "Opción D"],
-    "correct_index": 0,
-    "explanation": "Explicación de por qué la opción A es correcta basada en el texto."
-  }}
-]
+{{"data": [{{"id": 1, "question": "Pregunta detallada aquí", "options": ["Opción A", "Opción B", "Opción C", "Opción D"], "correct_index": 0, "explanation": "Explicación basada en el texto."}}]}}
 
 Fuentes:
 {combined_text}"""
-            raw_res = rag_service.call_ollama_generate(prompt, temperature=0.2)
+            raw_res = rag_service.call_ollama_generate(
+                prompt,
+                temperature=0.2,
+                response_format=studio_output_schema("quiz", count),
+                num_predict=max(2048, count * 700),
+            )
             try:
-                # Clean stray markdown wrapper if present
-                clean_json = raw_res.strip()
-                if clean_json.startswith("```"):
-                    clean_json = clean_json.split("\n", 1)[1]
-                if clean_json.endswith("```"):
-                    clean_json = clean_json.rsplit("\n", 1)[0]
-                if clean_json.startswith("json"):
-                    clean_json = clean_json[4:].strip()
-                quiz_data = json.loads(clean_json)
-                return {"type": "quiz", "data": quiz_data}
+                quiz_data = parse_studio_items(raw_res, "quiz")
             except Exception as e:
-                logger.error(f"Failed to parse quiz JSON: {e}. Raw response: {raw_res}")
-                return {"type": "markdown", "content": f"# 🧠 Examen Generado ({count} preguntas, Nivel {difficulty})\n\n{raw_res}"}
+                logger.error(
+                    "Failed to parse quiz JSON: %s. Response length: %s chars.",
+                    e,
+                    len(raw_res),
+                )
+                return {"status": "error", "message": "El modelo no devolvió preguntas de examen válidas. Intenta generarlo nuevamente."}
+
+            if len(quiz_data) < count:
+                missing = count - len(quiz_data)
+                existing_questions = "\n".join(f"- {item['question']}" for item in quiz_data)
+                retry_prompt = f"""La generación anterior quedó truncada. Crea exactamente {missing} preguntas NUEVAS de opción múltiple con nivel '{difficulty}' para completar el examen.
+No repitas estas preguntas ya generadas:
+{existing_questions}
+{custom_prompt_part}
+Responde exclusivamente con JSON estructurado. Cada pregunta debe incluir question, options, correct_index y explanation.
+
+Fuentes:
+{combined_text}"""
+                try:
+                    retry_raw = rag_service.call_ollama_generate(
+                        retry_prompt,
+                        temperature=0.2,
+                        response_format=studio_output_schema("quiz", missing),
+                        num_predict=max(2048, missing * 700),
+                    )
+                    quiz_data.extend(parse_studio_items(retry_raw, "quiz")[:missing])
+                except Exception as e:
+                    logger.warning("Could not complete truncated quiz: %s", e)
+
+            quiz_data = quiz_data[:count]
+            result: Dict[str, Any] = {
+                "type": "quiz",
+                "data": [{**item, "id": index} for index, item in enumerate(quiz_data, start=1)],
+                "requested_count": count,
+            }
+            if len(quiz_data) < count:
+                result["warning"] = f"Se recuperaron {len(quiz_data)} de las {count} preguntas solicitadas."
+            return result
 
         elif artifact_type == "flashcards":
             prompt = f"""Basándote en las siguientes fuentes, crea un conjunto de exactamente {count} **Tarjetas de Estudio (Flashcards)** para memorización rápida de conceptos con nivel de dificultad '{difficulty}'.
 {custom_prompt_part}
-DEBES responder EXCLUSIVAMENTE con una estructura JSON estricta (sin markdown, sin bloques ```json, únicamente el JSON puro) con este formato exacto:
+DEBES responder EXCLUSIVAMENTE con una estructura JSON estricta con este formato exacto:
 
-[
-  {{
-    "id": 1,
-    "front": "Pregunta o Concepto Clave",
-    "back": "Respuesta precisa y explicación corta"
-  }}
-]
+{{"data": [{{"id": 1, "front": "Pregunta o Concepto Clave", "back": "Respuesta precisa y explicación corta"}}]}}
 
 Fuentes:
 {combined_text}"""
-            raw_res = rag_service.call_ollama_generate(prompt, temperature=0.2)
+            raw_res = rag_service.call_ollama_generate(
+                prompt,
+                temperature=0.2,
+                response_format=studio_output_schema("flashcards", count),
+                num_predict=max(2048, count * 300),
+            )
             try:
-                clean_json = raw_res.strip()
-                if clean_json.startswith("```"):
-                    clean_json = clean_json.split("\n", 1)[1]
-                if clean_json.endswith("```"):
-                    clean_json = clean_json.rsplit("\n", 1)[0]
-                if clean_json.startswith("json"):
-                    clean_json = clean_json[4:].strip()
-                cards_data = json.loads(clean_json)
+                cards_data = parse_studio_items(raw_res, "flashcards")
                 return {"type": "flashcards", "data": cards_data}
             except Exception as e:
                 logger.error(f"Failed to parse flashcards JSON: {e}. Raw response: {raw_res}")

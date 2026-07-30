@@ -28,11 +28,11 @@ interface TranscribeTabProps {
   pendingPath?: string | null;
 }
 
-export default function TranscribeTab({ 
-  onTranscriptionSuccess, 
-  statusData, 
-  isPolling, 
-  startPollingStatus, 
+export default function TranscribeTab({
+  onTranscriptionSuccess,
+  statusData,
+  isPolling: _isPolling,
+  startPollingStatus,
   stopPollingStatus,
   transcriptionList = [],
   activeTranscriptionId = null,
@@ -102,7 +102,7 @@ export default function TranscribeTab({
   // Synchronize state when background task status changes
   React.useEffect(() => {
     if (statusData) {
-      setIsProcessing(statusData.is_running);
+      setIsProcessing(Boolean(statusData.is_running));
     }
   }, [statusData]);
 
@@ -237,8 +237,8 @@ export default function TranscribeTab({
             const formData = new FormData();
             formData.append('file', item.file);
             formData.append('backend', backend);
-            formData.append('model', model);
-            if (language) formData.append('language', language);
+            formData.append('model_name', model);
+            if (language.trim()) formData.append('language', language.trim().toLowerCase());
             formData.append('diarize', String(diarize));
             if (hfToken) formData.append('hf_token', hfToken);
             if (diarize && minSpeakers) formData.append('min_speakers', minSpeakers);
@@ -286,8 +286,8 @@ export default function TranscribeTab({
         }
         
         formData.append('backend', backend);
-        formData.append('model', model);
-        if (language) formData.append('language', language);
+        formData.append('model_name', model);
+        if (language.trim()) formData.append('language', language.trim().toLowerCase());
         formData.append('diarize', String(diarize));
         if (hfToken) formData.append('hf_token', hfToken);
         if (diarize && minSpeakers) formData.append('min_speakers', minSpeakers);

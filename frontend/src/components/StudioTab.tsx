@@ -1,21 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Marked } from 'marked';
-import { Transcription, Project, Folder } from '../types';
+import { Transcription, Project, Folder, StudioResumePayload } from '../types';
 import FolderTree from './FolderTree';
-
-const marked = new Marked();
-
-interface PendingStudioResume {
-  artifact_type: string;
-  data: any;
-}
+import { markdownToSafeHtml } from '../utils/markdown';
+import { normalizeStudioArtifact } from '../utils/studioArtifacts';
 
 interface StudioTabProps {
   transcriptionList: Transcription[];
   activeId: number | null;
   active: boolean;
-  pendingResume?: PendingStudioResume | null;
+  pendingResume?: StudioResumePayload | null;
   onClearPendingResume?: () => void;
 }
 
@@ -25,12 +19,6 @@ interface QuizQuestion {
   options: string[];
   correct_index: number;
   explanation: string;
-}
-
-interface Flashcard {
-  id: number;
-  front: string;
-  back: string;
 }
 
 interface ToolConfig {
@@ -48,7 +36,7 @@ const defaultConfigMap: Record<string, ToolConfig> = {
   flashcards: { count: 10, difficulty: 'Intermedio', lengthSetting: 'Estándar', customInstructions: '' },
 };
 
-export default function StudioTab({ transcriptionList, activeId, active, pendingResume, onClearPendingResume }: StudioTabProps) {
+const StudioTab = React.memo(function StudioTab({ transcriptionList, activeId, active, pendingResume, onClearPendingResume }: StudioTabProps) {
   const [selectedSourceIds, setSelectedSourceIds] = useState<Set<number>>(new Set());
   const [projects, setProjects] = useState<Project[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
@@ -108,21 +96,7 @@ export default function StudioTab({ transcriptionList, activeId, active, pending
     if (active && pendingResume) {
       const mode = pendingResume.artifact_type || pendingResume.type || 'briefing';
       setActiveArtifactType(mode);
-      
-      const isQuizOrFlashcards = mode === 'quiz' || mode === 'flashcards';
-      const artifactType = isQuizOrFlashcards ? mode : 'markdown';
-      const questionsOrCards = pendingResume.data || pendingResume.quiz || pendingResume.flashcards || [];
-      const markdownContent = pendingResume.content || (typeof pendingResume === 'string' ? pendingResume : '');
-      
-      const restoredArtifactData = {
-        ...pendingResume,
-        type: artifactType,
-        artifact_type: mode,
-        content: markdownContent,
-        data: questionsOrCards
-      };
-      
-      setArtifactData(restoredArtifactData);
+      setArtifactData(normalizeStudioArtifact(pendingResume, mode));
       setUserAnswers({});
       setShowQuizResults(false);
       setCurrentCardIndex(0);
@@ -132,7 +106,7 @@ export default function StudioTab({ transcriptionList, activeId, active, pending
         onClearPendingResume();
       }
     }
-  }, [active, pendingResume]);
+  }, [active, pendingResume, onClearPendingResume]);
 
   useEffect(() => {
     if (activeId) {
@@ -149,31 +123,29 @@ export default function StudioTab({ transcriptionList, activeId, active, pending
     });
   };
 
-  const handleToggleFolder = (folderId: number) => {
-    const folderSources = transcriptionList.filter(s => s.folder_id === folderId);
-    const folderSourceIds = folderSources.map(s => s.id);
-    const allSelected = folderSourceIds.every(id => selectedSourceIds.has(id));
+  const handleToggleFolder = (_folderId: number, folderSourceIds: number[], _childFolderIds: number[], forceState?: boolean) => {
+    const allSelected = folderSourceIds.length > 0 && folderSourceIds.every(id => selectedSourceIds.has(id));
+    const shouldSelect = forceState ?? !allSelected;
 
     setSelectedSourceIds(prev => {
       const next = new Set(prev);
       folderSourceIds.forEach(id => {
-        if (allSelected) next.delete(id);
-        else next.add(id);
+        if (shouldSelect) next.add(id);
+        else next.delete(id);
       });
       return next;
     });
   };
 
-  const handleToggleProject = (projectId: number) => {
-    const projectSources = transcriptionList.filter(s => s.project_id === projectId);
-    const projectSourceIds = projectSources.map(s => s.id);
-    const allSelected = projectSourceIds.every(id => selectedSourceIds.has(id));
+  const handleToggleProject = (_projectId: number | null, projectSourceIds: number[], forceState?: boolean) => {
+    const allSelected = projectSourceIds.length > 0 && projectSourceIds.every(id => selectedSourceIds.has(id));
+    const shouldSelect = forceState ?? !allSelected;
 
     setSelectedSourceIds(prev => {
       const next = new Set(prev);
       projectSourceIds.forEach(id => {
-        if (allSelected) next.delete(id);
-        else next.add(id);
+        if (shouldSelect) next.add(id);
+        else next.delete(id);
       });
       return next;
     });
@@ -231,7 +203,7 @@ export default function StudioTab({ transcriptionList, activeId, active, pending
         throw new Error(data.message || 'Error en la generación de fuentes.');
       }
 
-      setArtifactData(data);
+      setArtifactData(normalizeStudioArtifact(data, activeArtifactType));
     } catch (err: any) {
       alert(`Error en Studio Hub: ${err.message}`);
     } finally {
@@ -241,9 +213,7 @@ export default function StudioTab({ transcriptionList, activeId, active, pending
 
   const renderMarkdown = (text: string) => {
     if (!text) return { __html: '' };
-    marked.use({ breaks: true, gfm: true });
-    const rawHtml = marked.parse(text) as string;
-    return { __html: rawHtml };
+    return { __html: markdownToSafeHtml(text) };
   };
 
   const handleSaveToNotebook = async (title: string, content: string, sourceType = 'user_note') => {
@@ -554,6 +524,12 @@ export default function StudioTab({ transcriptionList, activeId, active, pending
                 {/* Interactive Quiz / Exam Player */}
                 {artifactData.type === 'quiz' && Array.isArray(artifactData.data) && (
                   <div className="flex flex-col gap-6">
+                    {typeof artifactData.warning === 'string' && (
+                      <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-200">
+                        <i className="fa-solid fa-triangle-exclamation mr-2"></i>
+                        {artifactData.warning}
+                      </div>
+                    )}
                     <div className="flex items-center justify-between pb-3 border-b border-white/10">
                       <div>
                         <h3 className="text-base font-semibold text-white flex items-center gap-2">
@@ -873,4 +849,6 @@ export default function StudioTab({ transcriptionList, activeId, active, pending
       )}
     </section>
   );
-}
+});
+
+export default StudioTab;

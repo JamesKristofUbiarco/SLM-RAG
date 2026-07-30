@@ -1,11 +1,12 @@
 import numpy as np
 import requests
-import json
-import pickle
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any
 from sentence_transformers import SentenceTransformer
 from database import get_db
 from config import settings
+from citation_utils import normalize_citation_groups
+from text_chunking import chunk_text_by_characters
+from vector_storage import deserialize_embedding, serialize_embedding
 
 class RAGService:
     def __init__(self):
@@ -32,41 +33,20 @@ class RAGService:
             print("Embedding model unloaded successfully.")
         
     def chunk_text(self, text: str, size: int = settings.chunk_size, overlap: int = settings.chunk_overlap) -> List[str]:
-        """Divide the text into overlapping chunks of characters."""
-        if not text or not text.strip():
-            return []
-            
-        # We split by space to avoid cutting in the middle of words
-        words = text.split()
-        if len(text) <= size:
-            return [text]
-            
-        chunks = []
-        current_words = []
-        current_length = 0
-        
-        # Word-based chunking with word-based overlap to keep sentences clean
-        overlap_words_count = max(1, int(overlap / 6)) # estimate 6 chars per word
-        step = max(1, int(size / 6) - overlap_words_count)
-        
-        i = 0
-        while i < len(words):
-            chunk_words = words[i:i + int(size / 6)]
-            chunk_text = " ".join(chunk_words)
-            if chunk_text.strip():
-                chunks.append(chunk_text)
-            i += step
-            
-        return chunks
+        """Divide text into word-aware chunks bounded by actual characters."""
+        return chunk_text_by_characters(text, size=size, overlap=overlap)
 
     def generate_embeddings(self, texts: List[str]) -> List[np.ndarray]:
         """Generate vector embeddings for a list of texts."""
         if not texts:
             return []
-        self._load_model()
         from gpu_lock import gpu_lock
         with gpu_lock.acquire("Generar Embeddings"):
-            return self.model.encode(texts, convert_to_numpy=True)
+            try:
+                self._load_model()
+                return self.model.encode(texts, convert_to_numpy=True)
+            finally:
+                self.unload_embedding_model()
 
     def store_chunks(self, transcription_id: int, text: str):
         """Chunk text, generate embeddings, and save to SQLite database."""
@@ -77,15 +57,21 @@ class RAGService:
         embeddings = self.generate_embeddings(chunks)
         
         with get_db() as conn:
+            # Re-index atomically and idempotently after embeddings were created.
+            conn.execute("DELETE FROM chunks WHERE transcription_id = ?", (transcription_id,))
             for chunk_text, emb in zip(chunks, embeddings):
-                emb_blob = pickle.dumps(emb)
+                emb_blob, dimension = serialize_embedding(emb)
                 conn.execute(
-                    "INSERT INTO chunks (transcription_id, text, embedding) VALUES (?, ?, ?)",
-                    (transcription_id, chunk_text, emb_blob)
+                    """INSERT INTO chunks
+                       (transcription_id, text, embedding, embedding_model, embedding_dimension, index_version)
+                       VALUES (?, ?, ?, ?, ?, 2)""",
+                    (transcription_id, chunk_text, emb_blob, settings.embedding_model, dimension)
                 )
             conn.commit()
-        # Unload model from VRAM immediately to free memory!
-        self.unload_embedding_model()
+
+    @staticmethod
+    def deserialize_embedding(row: Any) -> np.ndarray:
+        return deserialize_embedding(row)
 
     def get_context_with_citations(self, query: str, transcription_ids: Any, top_k: int = 6) -> Dict[str, Any]:
         """
@@ -105,15 +91,12 @@ class RAGService:
         if not ids:
             return {"context_text": "", "citations": []}
 
-        self._load_model()
-        from gpu_lock import gpu_lock
-        with gpu_lock.acquire("Codificar Consulta (RAG)"):
-            query_vector = self.model.encode(query, convert_to_numpy=True)
-        self.unload_embedding_model()
+        query_vector = self.generate_embeddings([query])[0]
         
         placeholders = ",".join(["?"] * len(ids))
         sql = f"""
-            SELECT c.id, c.text, c.embedding, c.transcription_id, t.filename 
+            SELECT c.id, c.text, c.embedding, c.embedding_model,
+                   c.embedding_dimension, c.index_version, c.transcription_id, t.filename
             FROM chunks c
             JOIN transcriptions t ON c.transcription_id = t.id
             WHERE c.transcription_id IN ({placeholders})
@@ -126,7 +109,9 @@ class RAGService:
             
         similarities = []
         for row in rows:
-            emb = pickle.loads(row["embedding"])
+            emb = self.deserialize_embedding(row)
+            if emb.shape != query_vector.shape:
+                continue
             dot_product = np.dot(query_vector, emb)
             norm_q = np.linalg.norm(query_vector)
             norm_emb = np.linalg.norm(emb)
@@ -156,7 +141,7 @@ class RAGService:
                 "snippet": text[:350] + ("..." if len(text) > 350 else ""),
                 "full_text": text
             })
-            context_parts.append(f"[Fuente Cita [{idx}] | Archivo: {filename}]\n{text}")
+            context_parts.append(f"[Fuente Local [L{idx}] | Archivo: {filename}]\n{text}")
 
         return {
             "context_text": "\n\n---\n\n".join(context_parts),
@@ -168,7 +153,13 @@ class RAGService:
         res = self.get_context_with_citations(query, transcription_ids, top_k=top_k)
         return res["context_text"]
 
-    def call_ollama_generate(self, prompt: str, temperature: float = 0.3) -> str:
+    def call_ollama_generate(
+        self,
+        prompt: str,
+        temperature: float = 0.3,
+        response_format: Any = None,
+        num_predict: int | None = None,
+    ) -> str:
         """Query Ollama generate API endpoint."""
         payload = {
             "model": settings.llm_model,
@@ -179,30 +170,38 @@ class RAGService:
                 "num_ctx": settings.ollama_context_length
             }
         }
+        if response_format is not None:
+            payload["format"] = response_format
+        if num_predict is not None:
+            payload["options"]["num_predict"] = num_predict
         from gpu_lock import gpu_lock
         with gpu_lock.acquire("Ollama Generación"):
             try:
                 response = requests.post(f"{settings.ollama_url}/api/generate", json=payload, timeout=180)
-                if response.status_code == 200:
-                    return response.json().get("response", "").strip()
-            except Exception as e:
-                return f"[Error Ollama connection]: {str(e)}"
-            return "[Error]: No response from Ollama."
+                response.raise_for_status()
+                result = response.json().get("response", "").strip()
+                if not result:
+                    raise RuntimeError("Ollama devolvió una respuesta vacía.")
+                return result
+            except (requests.RequestException, ValueError) as exc:
+                raise RuntimeError("No se pudo obtener una respuesta válida de Ollama.") from exc
 
     def unload_model(self) -> bool:
         """Tell Ollama to unload the LLM model from VRAM to free GPU memory."""
-        try:
-            payload = {
-                "model": settings.llm_model,
-                "prompt": "",
-                "keep_alive": 0
-            }
-            response = requests.post(f"{settings.ollama_url}/api/generate", json=payload, timeout=10)
-            if response.status_code == 200:
-                print(f"Successfully requested Ollama to unload model '{settings.llm_model}' from VRAM.")
-                return True
-        except Exception as e:
-            print(f"Failed to unload Ollama model: {str(e)}")
+        from gpu_lock import gpu_lock
+        with gpu_lock.acquire("Descargar modelo Ollama"):
+            try:
+                payload = {
+                    "model": settings.llm_model,
+                    "prompt": "",
+                    "keep_alive": 0
+                }
+                response = requests.post(f"{settings.ollama_url}/api/generate", json=payload, timeout=10)
+                if response.status_code == 200:
+                    print(f"Successfully requested Ollama to unload model '{settings.llm_model}' from VRAM.")
+                    return True
+            except Exception as e:
+                print(f"Failed to unload Ollama model: {str(e)}")
         return False
 
     def generate_summary(self, title: str, text: str) -> str:
@@ -614,7 +613,9 @@ Contenido Web:
         if has_real_context:
             system_prompt = f"""Eres un asistente experto de inteligencia artificial RAG. [Fecha/Hora Sistema: {now_str}]
 Responde la pregunta del usuario utilizando la información provista en el 'Contexto' a continuación. 
-REGLA OBLIGATORIA DE CITAS: Cada vez que afirmes un hecho, dato, cifra o concepto obtenido del contexto, coloca la etiqueta de cita correspondiente al final de la frase entre corchetes, por ejemplo [1] o [2]. Utiliza únicamente los números de cita provistos en los encabezados del contexto [Fuente Cita [1]...].
+REGLA OBLIGATORIA DE CITAS: Cada hecho obtenido del contexto debe terminar con la etiqueta exacta de su encabezado. Usa [L1], [L2], etc. para Fuentes Locales y [W1], [W2], etc. para Fuentes Web. Nunca uses una etiqueta numérica ambigua como [1].
+FORMATO OBLIGATORIO: cada cita debe tener su propio par de corchetes. Si una afirmación usa varias fuentes, escribe [L2][W3][W5]. Nunca agrupes números como [W2, W3, W5]. Si una fuente oficial respalda el dato, prefiérela y evita acumular fuentes secundarias redundantes.
+Para hechos actuales, prioriza la fuente oficial y la información más reciente. Distingue claramente resultados observados de pronósticos, apuestas o datos históricos; no los mezcles.
 
 Contexto de la Información:
 {context}
@@ -647,7 +648,13 @@ Responde a las preguntas del usuario utilizando tu conocimiento general preentre
             try:
                 response = requests.post(f"{settings.ollama_url}/api/chat", json=payload, timeout=90)
                 if response.status_code == 200:
-                    return response.json().get("message", {}).get("content", "Error al procesar la consulta.")
+                    content = response.json().get("message", {}).get("content", "Error al procesar la consulta.")
+                    has_local_context = "[Fuente Local [L" in context
+                    has_web_context = "[Fuente Web [W" in context
+                    default_namespace = "L" if has_local_context and not has_web_context else None
+                    if has_web_context and not has_local_context:
+                        default_namespace = "W"
+                    return normalize_citation_groups(content, default_namespace=default_namespace)
             except Exception as e:
                 return f"Error al consultar al modelo de lenguaje: {str(e)}"
             return "No se pudo obtener respuesta."

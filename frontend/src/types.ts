@@ -43,6 +43,17 @@ export interface Transcription {
   segments?: Segment[];
   project_id?: number | null;
   folder_id?: number | null;
+  source_type?: 'audio' | 'video' | 'youtube' | 'document' | 'web' | string;
+}
+
+export interface StudioResumePayload {
+  artifact_type?: string;
+  type?: string;
+  title?: string;
+  content?: string;
+  data?: unknown;
+  quiz?: unknown;
+  flashcards?: unknown;
 }
 
 export interface StatusData {
@@ -74,10 +85,12 @@ export interface SearchResult {
 }
 
 export interface WebSource {
+  num?: number;
   title: string;
   url: string;
   domain: string;
   snippet?: string;
+  relevant?: boolean;
 }
 
 export interface CitationItem {
@@ -120,4 +133,3 @@ export interface NoteItem {
   source_type: string;
   created_at: string;
 }
-

@@ -1,13 +1,12 @@
-import os
 import re
 import urllib.parse
 import logging
-import requests
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any
 
 from docling.document_converter import DocumentConverter
 from config import settings
+from security import fetch_public_http, safe_filename, validate_public_http_url
 
 logger = logging.getLogger("web_ingester")
 
@@ -49,9 +48,7 @@ def extract_web_page(url: str) -> Dict[str, Any]:
     Downloads and converts a web page URL into clean structured Markdown using Docling,
     applying anti-prompt-injection guardrails.
     """
-    url = url.strip()
-    if not url.startswith(("http://", "https://")):
-        url = "https://" + url
+    url = validate_public_http_url(url)
 
     parsed_url = urllib.parse.urlparse(url)
     domain = parsed_url.netloc.replace("www.", "")
@@ -61,40 +58,33 @@ def extract_web_page(url: str) -> Dict[str, Any]:
     doc_markdown = ""
     title = ""
 
-    # 1. Attempt direct Docling URL conversion
+    # Fetch first with redirect and private-network validation, then give Docling
+    # a local file. Direct URL conversion would bypass these SSRF checks.
+    temp_html_file = None
     try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124 Safari/537.36"
+        }
+        resp = fetch_public_http(url, headers=headers, timeout=25)
+        temp_dir = Path(settings.upload_dir) / ".temp_web"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        temp_html_file = temp_dir / f"web_{abs(hash(url))}.html"
+        temp_html_file.write_text(resp.text, encoding="utf-8")
+
         doc_converter = DocumentConverter()
-        result = doc_converter.convert(url)
+        result = doc_converter.convert(str(temp_html_file))
         doc_markdown = result.document.export_to_markdown()
-    except Exception as err1:
-        logger.warning(f"Direct Docling URL conversion failed for {url}: {err1}. Trying HTTP fetch fallback...")
-        # 2. Fallback: HTTP GET request -> temp file -> Docling conversion
-        try:
-            headers = {
-                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-            }
-            resp = requests.get(url, headers=headers, timeout=25)
-            resp.raise_for_status()
-            
-            temp_dir = Path(settings.upload_dir) / ".temp_web"
-            temp_dir.mkdir(parents=True, exist_ok=True)
-            temp_html_file = temp_dir / f"web_{hash(url)}.html"
-            
-            with open(temp_html_file, "w", encoding="utf-8") as f:
-                f.write(resp.text)
-
-            doc_converter = DocumentConverter()
-            result = doc_converter.convert(str(temp_html_file))
-            doc_markdown = result.document.export_to_markdown()
-
-            # Clean temp file
+    except Exception as err:
+        # The caller decides whether an unavailable page is fatal. In agentic
+        # search it is an expected per-source failure and is logged once there.
+        logger.debug("Failed to fetch and parse web page %s: %s", url, err, exc_info=True)
+        raise RuntimeError(f"No se pudo extraer el contenido de la web '{url}': {str(err)}") from err
+    finally:
+        if temp_html_file is not None:
             try:
                 temp_html_file.unlink()
-            except Exception:
+            except OSError:
                 pass
-        except Exception as err2:
-            logger.error(f"Failed to fetch and parse web page {url}: {err2}")
-            raise RuntimeError(f"No se pudo extraer el contenido de la web '{url}': {str(err2)}")
 
     # 3. Extract title from Markdown h1 or URL path
     h1_match = re.search(r"^#\s+(.+)$", doc_markdown, re.MULTILINE)
@@ -106,7 +96,7 @@ def extract_web_page(url: str) -> Dict[str, Any]:
 
     # Format filename safely
     clean_title_slug = re.sub(r"[^\w\s-]", "", title).strip().replace(" ", "-")
-    clean_filename = f"web_{domain}_{clean_title_slug[:50]}.md"
+    clean_filename = safe_filename(f"web_{domain}_{clean_title_slug[:50]}.md", "web_source.md")
 
     # 4. Apply Prompt Injection Guardrails
     clean_text = sanitize_web_content(doc_markdown)
